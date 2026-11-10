@@ -1,0 +1,12 @@
+[package]
+name = "unicorn-aarch64"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Thin typed AArch64 ISA oracle wrapper around `unicorn-engine` (`UC_ARCH_ARM64`,
+# `UC_CPU_ARM64_MAX`) implementing `isa_oracle::Arm64Oracle` (`[TEST ONLY]`).
+
+[dependencies]
+isa-oracle = { path = "../isa-oracle" }
+unicorn-engine = { version = "=2.1.3", default-features = false, features = ["arch_aarch64"] }

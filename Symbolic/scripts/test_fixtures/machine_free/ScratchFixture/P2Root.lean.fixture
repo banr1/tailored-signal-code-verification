@@ -1,0 +1,7 @@
+import ScratchFixture.P2MixedCMod
+
+namespace ScratchFixture.P2Root
+
+theorem p2_uses_pure_const_of_c_mod : ScratchFixture.P2MixedCMod.layoutOffset = 16 := rfl
+
+end ScratchFixture.P2Root

@@ -1,0 +1,718 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.SpqrV1.Poly.DecodedMessage.DropEpilogue
+import LibsignalBinary.Proofs.SpqrV1.Alloc.VecDequeHeap
+import LibsignalBinary.Proofs.SpqrV1.Poly.AddChunk.Loop
+import LibsignalBinary.Proofs.SpqrV1.Poly.EncoderIntoPb.Defs
+import ProofLib.SepLogic.WPp
+import LibsignalBinary.Proofs.SpqrV1.Poly.LagrangePrepare.Proof -- shake: keep
+
+/-!
+# `<spqr::encoding::polynomial::PolyDecoder as spqr::encoding::Decoder>::decoded_message`: Relocatable Drop Glue and Epilogue
+
+Relocatable `[LibsignalPlacement]` proofs of the `polys: [Option<Poly>; 16]` drop glue,
+`points_vecs` deallocation, and epilogue on Block `418`.
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+
+namespace CryptoVerification.SpqrV1.Poly.DecodedMessage
+
+open Arm64 ProofLib ProofLib.ProgramReflection CryptoVerification.RustHeap
+open CryptoVerification.LibsignalSessionRepr CryptoVerification.LibsignalTripleRatchet
+open CryptoVerification.LibsignalTripleRatchetRepr CryptoVerification.LibsignalSpqrV1
+open CryptoVerification.SpqrV1.Poly CryptoVerification.SpqrV1.Alloc CryptoVerification.CodeLayout
+open CryptoVerification.SpqrV1.Poly.AddChunk CryptoVerification.SpqrV1.Poly.AddChunk.AddChunkNorm
+open CryptoVerification.SpqrV1.Poly.ComputeAt
+open CryptoVerification.SpqrV1.Poly.LagrangePrepare (lagrangePrepareName lagrangePrepare_fnOff LagrangePrepareArgs lagrangePrepareSpec lagrangePreparePure lagrangePreparePure_length lagrangePrepareStack lagrangePrepare_ok polyOf_eq)
+open CryptoVerification.SpqrV1.Poly.LagrangeComplete
+
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+set_option linter.unusedSimpArgs false
+
+attribute [local irreducible] Program.fetch Program.externAt? Program.fnOff
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+attribute [local arm64_norm ↓, local wp_norm ↓]
+  sp_setPC_pre sp_setMem_setPC_pre
+  readReg64_setPC_pre readReg64_setMem_setPC_pre
+  readReg32_setPC_pre readReg32_setMem_setPC_pre
+  readReg_setPC_pre readReg_setMem_setPC_pre
+
+attribute [local wp_norm, local arm64_norm] noneCap_slt_one
+attribute [local irreducible] noneCap
+attribute [local wp_norm ↓, local arm64_norm ↓] sp216_add_8 sp216_add_16
+
+set_option hygiene false in
+local macro "def_drop_poly_slot_placed " thmName:ident _startOff:num startBv:term:max endBv:term:max slotBv:term:max prevBytes:num nextBytes:num : command =>
+  `(command|
+    theorem $thmName [lsmpl : LibsignalPlacement] {A : RustAlloc}
+        {ext : String → Option (State → State)} {ret_pc : BitVec 64}
+        (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+        (sp0 : BitVec 64) (hsp0 : sp0 &&& 0xf#64 = 0#64)
+        (opt : Option Poly)
+        (s : State) (P : SepProp) (post : State → SepProp → Prop)
+        (hpc : s.pc = (blkPl_418).base + $startBv)
+        (hstat : s.status = .Running)
+        (hsp : s.sp = sp0 - 672#64)
+        (hcont : ∀ sf : State,
+          sf.pc = (blkPl_418).base + $endBv →
+          sf.status = .Running →
+          sf.sp = sp0 - 672#64 →
+          traceVRegs sf = traceVRegs s →
+          SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc sf
+            (memRegion (sp0 - 600#64) $nextBytes ∗
+              A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post) :
+        SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc s
+          (memRegion (sp0 - 600#64) $prevBytes ∗
+            A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+            optPolyCacheSlotAt A (sp0 - $slotBv) opt ∗ P) post := by
+      have hdealloc : subroutine_ok ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext))
+          (lsρ spqrRustDeallocSym) (rustDeallocSpec A) :=
+        SpqrV1.Alloc.spqr_hook_ok_of_mem hdealloc_sat
+      try dsimp only [BitVec.ofNat_eq_ofNat] at *
+      have hsp_align : s.sp &&& 15#64 = 0#64 := by
+        rw [hsp]; exact sp672_aligned sp0 hsp0
+      cases opt with
+      | none =>
+        unfold optPolyCacheSlotAt
+        rw [pull_none_slot]
+        have hslt := noneCap_slt_one
+        wp_steps 3
+        refine SepWP.weaken_pre
+          (merge_prev_slot_none sp0 (sp0 - $slotBv) $prevBytes $nextBytes rfl (by decide) (by bv_omega) _) ?_
+        apply hcont
+        · simp [wp_norm, arm64_norm]
+        · simp [wp_norm, arm64_norm, hstat]
+        · simpa [wp_norm, arm64_norm] using hsp
+        · simp [wp_norm, arm64_norm]
+      | some p =>
+        rw [pull_some_slot]
+        apply SepWP.exists_left; intro ptr_p
+        refine SepWP.pure_elim ?_
+        rintro ⟨hp_ge1, hp_le, _⟩
+        have hslt := bv64_slt_one_of_ge1_le65536 hp_ge1 hp_le
+        have htoNat := bv64_lsl1_toNat_of_le65536 hp_le
+        have hne0 := bv64_ofNat_ne0_of_ge1 hp_ge1 hp_le
+        refine SepWP.weaken_pre (dropPolySlot_some_to_dealloc A (sp0 - $slotBv) ptr_p p _) ?_
+        wp_steps 7
+        wp_call hdealloc
+        wp_conv_pre => rw [hsp]
+        refine SepWP.weaken_pre
+          (show _ ⊢
+            (((sp0 - $slotBv) ↦₆₄ BitVec.ofNat 64 p.coefficients.length) ∗
+              (((sp0 - $slotBv) + 8#64) ↦₆₄ ptr_p) ∗
+              (((sp0 - $slotBv) + 16#64) ↦₆₄ BitVec.ofNat 64 p.coefficients.length)) ∗
+              (memRegion (sp0 - 600#64) $prevBytes ∗
+                A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) by
+            simp only [arm64_norm]
+            exact Entails.of_eq (by ac_rfl)) ?_
+        refine SepWP.weaken_pre
+          (merge_prev_slot_some sp0 (sp0 - $slotBv) $prevBytes $nextBytes rfl (by decide) (by bv_omega) _ _ _ _) ?_
+        exact hcont _ hpc_sf hrun_sf (by rw [hsp_sf, hsp]) (by simp [traceVRegs, wp_norm, arm64_norm, *]))
+
+def_drop_poly_slot_placed dropPolySlot_1_placed_sepWP  1484 1484#64 1512#64 576#64 24  48
+def_drop_poly_slot_placed dropPolySlot_2_placed_sepWP  1512 1512#64 1540#64 552#64 48  72
+def_drop_poly_slot_placed dropPolySlot_3_placed_sepWP  1540 1540#64 1568#64 528#64 72  96
+def_drop_poly_slot_placed dropPolySlot_4_placed_sepWP  1568 1568#64 1596#64 504#64 96  120
+def_drop_poly_slot_placed dropPolySlot_5_placed_sepWP  1596 1596#64 1624#64 480#64 120 144
+def_drop_poly_slot_placed dropPolySlot_6_placed_sepWP  1624 1624#64 1652#64 456#64 144 168
+def_drop_poly_slot_placed dropPolySlot_7_placed_sepWP  1652 1652#64 1680#64 432#64 168 192
+def_drop_poly_slot_placed dropPolySlot_8_placed_sepWP  1680 1680#64 1708#64 408#64 192 216
+def_drop_poly_slot_placed dropPolySlot_9_placed_sepWP  1708 1708#64 1736#64 384#64 216 240
+def_drop_poly_slot_placed dropPolySlot_10_placed_sepWP 1736 1736#64 1764#64 360#64 240 264
+def_drop_poly_slot_placed dropPolySlot_11_placed_sepWP 1764 1764#64 1792#64 336#64 264 288
+def_drop_poly_slot_placed dropPolySlot_12_placed_sepWP 1792 1792#64 1820#64 312#64 288 312
+def_drop_poly_slot_placed dropPolySlot_13_placed_sepWP 1820 1820#64 1848#64 288#64 312 336
+def_drop_poly_slot_placed dropPolySlot_14_placed_sepWP 1848 1848#64 1876#64 264#64 336 360
+def_drop_poly_slot_placed dropPolySlot_15_placed_sepWP 1876 1876#64 1904#64 240#64 360 384
+
+/-- Drops slots `1..15` (`[LibsignalPlacement]`),
+    merging `memRegion (sp0 - 600#64) 24` and the 15 slots into `memRegion (sp0 - 600#64) 384`. -/
+theorem dropOptPolyCache_1_to_15_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)} {ret_pc : BitVec 64}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (sp0 : BitVec 64) (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15 : Option Poly)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 1484#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hcont : ∀ sf : State,
+      sf.pc = (blkPl_418).base + 1904#64 →
+      sf.status = .Running →
+      sf.sp = sp0 - 672#64 →
+      traceVRegs sf = traceVRegs s →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc sf
+        (memRegion (sp0 - 600#64) 384 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc s
+      (memRegion (sp0 - 600#64) 24 ∗
+        A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+        optPolyCacheListAt A (sp0 - 576#64)
+          [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] ∗ P) post := by
+  rw [optPolyCacheListAt_15_eq]
+  refine dropPolySlot_1_placed_sepWP hdealloc_sat sp0 hsp0 p1 s _ post hpc hstat hsp (fun s1 hpc1 hstat1 hsp1 htr1 => ?_)
+  refine dropPolySlot_2_placed_sepWP hdealloc_sat sp0 hsp0 p2 s1 _ post hpc1 hstat1 hsp1 (fun s2 hpc2 hstat2 hsp2 htr2 => ?_)
+  refine dropPolySlot_3_placed_sepWP hdealloc_sat sp0 hsp0 p3 s2 _ post hpc2 hstat2 hsp2 (fun s3 hpc3 hstat3 hsp3 htr3 => ?_)
+  refine dropPolySlot_4_placed_sepWP hdealloc_sat sp0 hsp0 p4 s3 _ post hpc3 hstat3 hsp3 (fun s4 hpc4 hstat4 hsp4 htr4 => ?_)
+  refine dropPolySlot_5_placed_sepWP hdealloc_sat sp0 hsp0 p5 s4 _ post hpc4 hstat4 hsp4 (fun s5 hpc5 hstat5 hsp5 htr5 => ?_)
+  refine dropPolySlot_6_placed_sepWP hdealloc_sat sp0 hsp0 p6 s5 _ post hpc5 hstat5 hsp5 (fun s6 hpc6 hstat6 hsp6 htr6 => ?_)
+  refine dropPolySlot_7_placed_sepWP hdealloc_sat sp0 hsp0 p7 s6 _ post hpc6 hstat6 hsp6 (fun s7 hpc7 hstat7 hsp7 htr7 => ?_)
+  refine dropPolySlot_8_placed_sepWP hdealloc_sat sp0 hsp0 p8 s7 _ post hpc7 hstat7 hsp7 (fun s8 hpc8 hstat8 hsp8 htr8 => ?_)
+  refine dropPolySlot_9_placed_sepWP hdealloc_sat sp0 hsp0 p9 s8 _ post hpc8 hstat8 hsp8 (fun s9 hpc9 hstat9 hsp9 htr9 => ?_)
+  refine dropPolySlot_10_placed_sepWP hdealloc_sat sp0 hsp0 p10 s9 _ post hpc9 hstat9 hsp9 (fun s10 hpc10 hstat10 hsp10 htr10 => ?_)
+  refine dropPolySlot_11_placed_sepWP hdealloc_sat sp0 hsp0 p11 s10 _ post hpc10 hstat10 hsp10 (fun s11 hpc11 hstat11 hsp11 htr11 => ?_)
+  refine dropPolySlot_12_placed_sepWP hdealloc_sat sp0 hsp0 p12 s11 _ post hpc11 hstat11 hsp11 (fun s12 hpc12 hstat12 hsp12 htr12 => ?_)
+  refine dropPolySlot_13_placed_sepWP hdealloc_sat sp0 hsp0 p13 s12 _ post hpc12 hstat12 hsp12 (fun s13 hpc13 hstat13 hsp13 htr13 => ?_)
+  refine dropPolySlot_14_placed_sepWP hdealloc_sat sp0 hsp0 p14 s13 _ post hpc13 hstat13 hsp13 (fun s14 hpc14 hstat14 hsp14 htr14 => ?_)
+  refine dropPolySlot_15_placed_sepWP hdealloc_sat sp0 hsp0 p15 s14 _ post hpc14 hstat14 hsp14 (fun s15 hpc15 hstat15 hsp15 htr15 => ?_)
+  exact hcont s15 hpc15 hstat15 hsp15
+    (by rw [htr15, htr14, htr13, htr12, htr11, htr10, htr9, htr8, htr7, htr6, htr5, htr4, htr3, htr2, htr1])
+
+/-- Copy `out` header to `out_sret` and drop `polys[0..16]` (`[LibsignalPlacement]`),
+    entered after `decodedMessageLoop_placed_wpp` when `1 ≤ dec.ptsNeeded`. -/
+theorem dropOptPolyCache_from1404_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)} {ret_pc : BitVec 64}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (sp0 out_sret out_ptr : BitVec 64)
+    (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (ptsNeeded : Nat) (hge1 : 1 ≤ ptsNeeded) (hle : ptsNeeded ≤ 16 * 65536)
+    (polys : List (Option Poly)) (hpolys : polys.length = 16)
+    (outFinal : List (BitVec 8)) (hout_len : outFinal.length = 2 * ptsNeeded)
+    (hout_ptr : out_ptr ≠ 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 1404#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hx29 : s.readReg64 .x29 = sp0 - 96#64)
+    (hcont : ∀ sf : State,
+      sf.pc = (blkPl_418).base + 1904#64 →
+      sf.status = .Running →
+      sf.sp = sp0 - 672#64 →
+      traceVRegs sf = traceVRegs s →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc sf
+        (optVecU8Of A out_sret (some outFinal) ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+          memRegion (sp0 - 600#64) 384 ∗
+          memRegion (sp0 - 216#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc s
+      (optPolyCacheListAt A (sp0 - 600#64) polys ∗
+        ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+        ((sp0 - 216#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+        ((sp0 - 208#64) ↦₆₄ out_ptr) ∗
+        ((sp0 - 200#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+        memRegion out_sret vecHeaderBytes ∗
+        A.live out_ptr (2 * ptsNeeded) 1 ∗
+        (out_ptr ↦ₛ outFinal) ∗
+        A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post := by
+  rcases list_length_16_eq polys hpolys with
+    ⟨p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, rfl⟩
+  have hdealloc : subroutine_ok ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext))
+      (lsρ spqrRustDeallocSym) (rustDeallocSpec A) :=
+    SpqrV1.Alloc.spqr_hook_ok_of_mem hdealloc_sat
+  have h1_15 := @dropOptPolyCache_1_to_15_placed_sepWP lsmpl A ext ret_pc hdealloc_sat sp0 hsp0
+    p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15
+  try dsimp only [BitVec.ofNat_eq_ofNat] at *
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  have hsplit_head :
+      optPolyCacheListAt A (sp0 - 600#64)
+        [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] =
+      optPolyCacheSlotAt A (sp0 - 600#64) p0 ∗
+        optPolyCacheListAt A (sp0 - 576#64)
+          [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] := by
+    unfold optPolyCacheListAt vecHeaderBytes
+    rw [Alloc.arrayAt_cons]
+    simp only [arm64_norm]
+  rw [hsplit_head, memRegion24_eq_exists_three out_sret]
+  wp_pull_exists
+  cases p0 with
+  | none =>
+    unfold optPolyCacheSlotAt
+    rw [sepConj_assoc]
+    have hslt := noneCap_slt_one
+    wp_steps 9
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        (((sp0 - 600#64) ↦₆₄ noneCap) ∗ memRegion (sp0 - 600#64 + 8#64) 16) ∗
+          (((sp0 - 216#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            ((sp0 - 216#64 + 8#64) ↦₆₄ out_ptr) ∗
+            ((sp0 - 216#64 + 16#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded))) ∗
+          ((out_sret ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            ((out_sret + 8#64) ↦₆₄ out_ptr) ∗
+            ((out_sret + 16#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            A.live out_ptr (2 * ptsNeeded) 1 ∗
+            (out_ptr ↦ₛ outFinal)) ∗
+          (A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+            optPolyCacheListAt A (sp0 - 576#64)
+              [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] ∗
+            ((sp0 - 632#64) ↦₆₄ out_sret) ∗ P) by
+        simp only [arm64_norm]
+        exact Entails.of_eq (by ac_rfl)) ?_
+    refine SepWP.weaken_pre
+      (sepConj_mono (optPolyCacheSlot_none_entails_memRegion24 (sp0 - 600#64))
+        (sepConj_mono
+          (pointsTo64_three_entails_memRegion24 (sp0 - 216#64)
+            (BitVec.ofNat 64 (2 * ptsNeeded)) out_ptr (BitVec.ofNat 64 (2 * ptsNeeded)))
+          (sepConj_mono_left
+            (fold_optVecU8Of_some A out_sret out_ptr outFinal (2 * ptsNeeded)
+              (by omega) (by omega) hout_len hout_ptr)))) ?_
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        memRegion (sp0 - 600#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+          optPolyCacheListAt A (sp0 - 576#64)
+            [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] ∗
+          (optVecU8Of A out_sret (some outFinal) ∗
+            ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+            memRegion (sp0 - 216#64) 24 ∗ P) by
+        exact Entails.of_eq (by ac_rfl)) ?_
+    refine h1_15 _ _ post
+      (by simp [wp_norm, arm64_norm])
+      (by simp [wp_norm, arm64_norm, hstat])
+      (by simpa [wp_norm, arm64_norm] using hsp)
+      (fun sf hpc_f hstat_f hsp_f htr_f => ?_)
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        optVecU8Of A out_sret (some outFinal) ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+          memRegion (sp0 - 600#64) 384 ∗
+          memRegion (sp0 - 216#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P by
+        exact Entails.of_eq (by ac_rfl)) ?_
+    exact hcont sf hpc_f hstat_f hsp_f (by simpa [wp_norm, arm64_norm] using htr_f)
+  | some p =>
+    unfold optPolyCacheSlotAt
+    rw [sepExists_sepConj_left]; apply SepWP.exists_left; intro ptr_p
+    rw [sepConj_assoc, sepConj_assoc]
+    refine SepWP.pure_elim ?_
+    rintro ⟨hp_ge1, hp_le, _⟩
+    have hslt := bv64_slt_one_of_ge1_le65536 hp_ge1 hp_le
+    have htoNat := bv64_lsl1_toNat_of_le65536 hp_le
+    have hne0 := bv64_ofNat_ne0_of_ge1 hp_ge1 hp_le
+    simp only [sepConj_assoc]
+    refine SepWP.weaken_pre (dropPolySlot_some_to_dealloc A (sp0 - 600#64) ptr_p p _) ?_
+    wp_steps 13
+    wp_call hdealloc
+    wp_conv_pre => rw [hsp]
+    wp_steps 1
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        (((sp0 - 600#64) ↦₆₄ BitVec.ofNat 64 p.coefficients.length) ∗
+          ((sp0 - 600#64 + 8#64) ↦₆₄ ptr_p) ∗
+          ((sp0 - 600#64 + 16#64) ↦₆₄ BitVec.ofNat 64 p.coefficients.length)) ∗
+          (((sp0 - 216#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            ((sp0 - 216#64 + 8#64) ↦₆₄ out_ptr) ∗
+            ((sp0 - 216#64 + 16#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded))) ∗
+          ((out_sret ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            ((out_sret + 8#64) ↦₆₄ out_ptr) ∗
+            ((out_sret + 16#64) ↦₆₄ BitVec.ofNat 64 (2 * ptsNeeded)) ∗
+            A.live out_ptr (2 * ptsNeeded) 1 ∗
+            (out_ptr ↦ₛ outFinal)) ∗
+          (A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+            optPolyCacheListAt A (sp0 - 576#64)
+              [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] ∗
+            ((sp0 - 632#64) ↦₆₄ out_sret) ∗ P) by
+        simp only [arm64_norm]
+        exact Entails.of_eq (by ac_rfl)) ?_
+    refine SepWP.weaken_pre
+      (sepConj_mono
+        (pointsTo64_three_entails_memRegion24 (sp0 - 600#64)
+          (BitVec.ofNat 64 p.coefficients.length) ptr_p (BitVec.ofNat 64 p.coefficients.length))
+        (sepConj_mono
+          (pointsTo64_three_entails_memRegion24 (sp0 - 216#64)
+            (BitVec.ofNat 64 (2 * ptsNeeded)) out_ptr (BitVec.ofNat 64 (2 * ptsNeeded)))
+          (sepConj_mono_left
+            (fold_optVecU8Of_some A out_sret out_ptr outFinal (2 * ptsNeeded)
+              (by omega) (by omega) hout_len hout_ptr)))) ?_
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        memRegion (sp0 - 600#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+          optPolyCacheListAt A (sp0 - 576#64)
+            [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15] ∗
+          (optVecU8Of A out_sret (some outFinal) ∗
+            ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+            memRegion (sp0 - 216#64) 24 ∗ P) by
+        exact Entails.of_eq (by ac_rfl)) ?_
+    refine h1_15 _ _ post
+      (by simp [wp_norm, arm64_norm])
+      (by simp [wp_norm, arm64_norm, hrun_sf])
+      (by rw [State.sp_setPC, hsp_sf, hsp])
+      (fun sf' hpc_f hstat_f hsp_f htr_f => ?_)
+    refine SepWP.weaken_pre
+      (show _ ⊢
+        optVecU8Of A out_sret (some outFinal) ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+          memRegion (sp0 - 600#64) 384 ∗
+          memRegion (sp0 - 216#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P by
+        exact Entails.of_eq (by ac_rfl)) ?_
+    exact hcont sf' hpc_f hstat_f hsp_f (by rw [htr_f]; simp [traceVRegs, wp_norm, arm64_norm, *])
+
+/-- Copy empty `out` header `(0, 1, 0)` to `out_sret` and drop `polys[0..16] = replicate 16 none`
+    (`[LibsignalPlacement]`), entered when `dec.ptsNeeded = 0`. -/
+theorem dropOptPolyCache_from1460_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)} {ret_pc : BitVec 64}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (sp0 out_sret : BitVec 64)
+    (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 1460#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hx29 : s.readReg64 .x29 = sp0 - 96#64)
+    (hcont : ∀ sf : State,
+      sf.pc = (blkPl_418).base + 1904#64 →
+      sf.status = .Running →
+      sf.sp = sp0 - 672#64 →
+      traceVRegs sf = traceVRegs s →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc sf
+        (optVecU8Of A out_sret (some []) ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+          memRegion (sp0 - 600#64) 384 ∗
+          memRegion (sp0 - 216#64) 24 ∗
+          A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) ret_pc s
+      (optPolyCacheListAt A (sp0 - 600#64) (List.replicate 16 none) ∗
+        ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+        ((sp0 - 216#64) ↦₆₄ 0#64) ∗
+        ((sp0 - 208#64) ↦₆₄ 1#64) ∗
+        ((sp0 - 200#64) ↦₆₄ 0#64) ∗
+        memRegion out_sret vecHeaderBytes ∗
+        A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P) post := by
+  have h1_15 := @dropOptPolyCache_1_to_15_placed_sepWP lsmpl A ext ret_pc hdealloc_sat sp0 hsp0
+    none none none none none none none none none none none none none none none
+  try dsimp only [BitVec.ofNat_eq_ofNat] at *
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  have hsplit_head :
+      optPolyCacheListAt A (sp0 - 600#64) (List.replicate 16 none) =
+      ((sp0 - 600#64) ↦₆₄ noneCap) ∗ memRegion (sp0 - 600#64 + 8#64) 16 ∗
+        optPolyCacheListAt A (sp0 - 576#64)
+          [none, none, none, none, none, none, none, none, none, none, none, none, none, none, none] := by
+    change optPolyCacheListAt A (sp0 - 600#64)
+      (none :: [none, none, none, none, none, none, none, none, none, none, none, none, none, none, none]) = _
+    unfold optPolyCacheListAt vecHeaderBytes
+    rw [Alloc.arrayAt_cons]
+    unfold optPolyCacheSlotAt
+    simp only [arm64_norm, sepConj_assoc]
+  rw [hsplit_head, memRegion24_eq_exists_three out_sret]
+  wp_pull_exists
+  wp_steps 6
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      (((sp0 - 600#64) ↦₆₄ noneCap) ∗ memRegion (sp0 - 600#64 + 8#64) 16) ∗
+        (((sp0 - 216#64) ↦₆₄ 0#64) ∗ ((sp0 - 216#64 + 8#64) ↦₆₄ 1#64) ∗ ((sp0 - 216#64 + 16#64) ↦₆₄ 0#64)) ∗
+        ((out_sret ↦₆₄ 0#64) ∗ ((out_sret + 8#64) ↦₆₄ 1#64) ∗ ((out_sret + 16#64) ↦₆₄ 0#64)) ∗
+        (A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+          optPolyCacheListAt A (sp0 - 576#64)
+            [none, none, none, none, none, none, none, none, none, none, none, none, none, none, none] ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗ P) by
+      simp only [arm64_norm]
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine SepWP.weaken_pre
+    (sepConj_mono (optPolyCacheSlot_none_entails_memRegion24 (sp0 - 600#64))
+      (sepConj_mono (pointsTo64_three_entails_memRegion24 (sp0 - 216#64) 0#64 1#64 0#64)
+        (sepConj_mono_left (fold_optVecU8Of_some_nil A out_sret)))) ?_
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      memRegion (sp0 - 600#64) 24 ∗
+        A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗
+        optPolyCacheListAt A (sp0 - 576#64)
+          [none, none, none, none, none, none, none, none, none, none, none, none, none, none, none] ∗
+        (optVecU8Of A out_sret (some []) ∗
+          ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+          memRegion (sp0 - 216#64) 24 ∗ P) by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine h1_15 _ _ post
+    (by simp [wp_norm, arm64_norm])
+    (by simp [wp_norm, arm64_norm, hstat])
+    (by simpa [wp_norm, arm64_norm] using hsp)
+    (fun sf hpc_f hstat_f hsp_f htr_f => ?_)
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      optVecU8Of A out_sret (some []) ∗
+        ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+        memRegion (sp0 - 600#64) 384 ∗
+        memRegion (sp0 - 216#64) 24 ∗
+        A.pool ∗ stackAt (sp0 - 672#64) allocHookStack ∗ P by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  exact hcont sf hpc_f hstat_f hsp_f (by simpa [wp_norm, arm64_norm] using htr_f)
+
+/-- Epilogue register restoration and `ret` (`[LibsignalPlacement]`). -/
+theorem decodedMessage_epilogue_ret_placed_sepWP [lsmpl : LibsignalPlacement]
+    {ext : String → Option (State → State)}
+    (s0 : State) (sp0 : BitVec 64) (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 320#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hcont : ∀ sf : State,
+      sf.pc = s0.readReg64 .x30 →
+      sf.status = .Running →
+      sf.sp = sp0 →
+      traceVRegs sf = traceVRegs s →
+      CalleeSavedGprsPreserved s0 sf →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) sf
+        (stackAt sp0 decodedMessageStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) s
+      (savedRegsAt sp0 s0 ∗
+        memRegion (sp0 - 672#64) 576 ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ P) post := by
+  try dsimp only [BitVec.ofNat_eq_ofNat] at *
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  have hsp96_align : (sp0 - 96#64) &&& 15#64 = 0#64 := by
+    have h : (sp0 - 96#64) &&& 15#64 = sp0 &&& 15#64 := by bv_bits
+    rw [h, hsp0]
+  unfold savedRegsAt
+  simp only [sepConj_assoc]
+  wp_steps 8
+  refine SepWP.weaken_pre
+    (show _ ⊢ stackAt sp0 decodedMessageStack ∗ P by
+      rw [stackAt_decodedMessage_eq sp0]
+      refine Entails.trans ?_
+        (sepConj_mono_left (sepConj_mono_right (sepConj_mono_right (savedRegsAt_entails_memRegion96 sp0 s0))))
+      unfold savedRegsAt
+      exact Entails.of_eq (by ac_rfl)) ?_
+  apply hcont
+  · simp [wp_norm, arm64_norm]
+  · simp [wp_norm, arm64_norm, hstat]
+  · simp [wp_norm, arm64_norm, hsp]
+  · simp [wp_norm, arm64_norm]
+  · unfold CalleeSavedGprsPreserved
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [wp_norm, arm64_norm]
+
+/-- Epilogue `points_vecs` deallocation and return (`[LibsignalPlacement]`). -/
+theorem decodedMessage_epilogue_dealloc_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (s0 : State) (sp0 pv_ptr : BitVec 64)
+    (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 304#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hx8 : s.readReg64 .x8 = 16#64)
+    (hcont : ∀ sf : State,
+      sf.pc = s0.readReg64 .x30 →
+      sf.status = .Running →
+      sf.sp = sp0 →
+      traceVRegs sf = traceVRegs s →
+      CalleeSavedGprsPreserved s0 sf →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) sf
+        (A.pool ∗ stackAt sp0 decodedMessageStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) s
+      (((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        memRegion (sp0 - 672#64) 56 ∗
+        memRegion (sp0 - 608#64) 512 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ P) post := by
+  have hdealloc : subroutine_ok ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext))
+      (lsρ spqrRustDeallocSym) (rustDeallocSpec A) :=
+    SpqrV1.Alloc.spqr_hook_ok_of_mem hdealloc_sat
+  have hret := @decodedMessage_epilogue_ret_placed_sepWP lsmpl ext s0 sp0 hsp0
+  try dsimp only [BitVec.ofNat_eq_ofNat] at hdealloc hret hpc hcont ⊢
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  have hsub16384 : sp0 - 672#64 - 16384#64 = sp0 - 17056#64 := by bv_omega
+  rw [stackAt_extHook_eq_allocHook (sp0 - 672#64)]
+  simp only [sepConj_assoc]
+  wp_steps 4
+  wp_call hdealloc
+  wp_conv_pre => rw [hsp]
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      savedRegsAt sp0 s0 ∗
+        memRegion (sp0 - 672#64) 576 ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ (A.pool ∗ P) by
+      rw [stackAt_extHook_eq_allocHook (sp0 - 672#64), hsub16384]
+      refine Entails.trans ?_
+        (sepConj_mono_right (sepConj_mono_left (memRegion_56_8_512_entails_576 sp0 pv_ptr)))
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine hret _ (A.pool ∗ P) post
+    hpc_sf hrun_sf (by rw [hsp_sf, hsp])
+    (fun sf' hpc_f hstat_f hsp_f htr_f hcs_f => ?_)
+  refine SepWP.weaken_pre
+    (show stackAt sp0 decodedMessageStack ∗ (A.pool ∗ P) ⊢
+      A.pool ∗ stackAt sp0 decodedMessageStack ∗ P by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  exact hcont sf' hpc_f hstat_f hsp_f (by rw [htr_f]; simp [traceVRegs, wp_norm, arm64_norm, *]) hcs_f
+
+/-- Epilogue from `entry + 1904#64` (`ldr x8, [sp, #0x30]; cbnz x8, entry + 304#64`) to return (`[LibsignalPlacement]`). -/
+theorem decodedMessage_epilogue_from1904_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (s0 : State) (sp0 pv_ptr : BitVec 64)
+    (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 1904#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hcont : ∀ sf : State,
+      sf.pc = s0.readReg64 .x30 →
+      sf.status = .Running →
+      sf.sp = sp0 →
+      traceVRegs sf = traceVRegs s →
+      CalleeSavedGprsPreserved s0 sf →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) sf
+        (A.pool ∗ stackAt sp0 decodedMessageStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) s
+      (((sp0 - 624#64) ↦₆₄ 16#64) ∗
+        ((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        memRegion (sp0 - 672#64) 48 ∗
+        memRegion (sp0 - 608#64) 512 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ P) post := by
+  have hdealloc_ep := @decodedMessage_epilogue_dealloc_placed_sepWP lsmpl A ext hdealloc_sat s0 sp0 pv_ptr hsp0
+  try dsimp only [BitVec.ofNat_eq_ofNat] at *
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  wp_steps 2
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      (memRegion (sp0 - 672#64) 48 ∗ ((sp0 - 624#64) ↦₆₄ 16#64)) ∗
+        (((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+          A.live pv_ptr 256 8 ∗
+          memRegion pv_ptr 256 ∗
+          memRegion (sp0 - 608#64) 512 ∗
+          savedRegsAt sp0 s0 ∗
+          A.pool ∗
+          stackAt (sp0 - 672#64) extHookStack ∗ P) by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine SepWP.weaken_pre (sepConj_mono_left (memRegion_48_8_entails_56 sp0 16#64)) ?_
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      ((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        memRegion (sp0 - 672#64) 56 ∗
+        memRegion (sp0 - 608#64) 512 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ P by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine hdealloc_ep _ P post
+    (by simp [wp_norm, arm64_norm])
+    (by simp [wp_norm, arm64_norm, hstat])
+    (by simpa [wp_norm, arm64_norm] using hsp)
+    (by simp [wp_norm, arm64_norm])
+    (fun sf hpc_f hstat_f hsp_f htr_f hcs_f => ?_)
+  exact hcont sf hpc_f hstat_f hsp_f (by simpa [wp_norm, arm64_norm] using htr_f) hcs_f
+
+/-- Epilogue from `entry + 288#64` (when `(collectPointsVecsTotal dec 0 16 false []).1 = true`):
+    stores `none` to `out_sret`, deallocates `points_vecs`, and returns (`[LibsignalPlacement]`). -/
+theorem decodedMessage_epilogue_from288_placed_sepWP [lsmpl : LibsignalPlacement] {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc_sat : HookSat (Rust.withPanics ext) spqrRustDeallocSym (rustDeallocSpec A))
+    (s0 : State) (sp0 out_sret pv_ptr w648 pvLenFinal : BitVec 64)
+    (hsp0 : sp0 &&& 0xf#64 = 0#64)
+    (s : State) (P : SepProp) (post : State → SepProp → Prop)
+    (hpc : s.pc = (blkPl_418).base + 288#64)
+    (hstat : s.status = .Running)
+    (hsp : s.sp = sp0 - 672#64)
+    (hcont : ∀ sf : State,
+      sf.pc = s0.readReg64 .x30 →
+      sf.status = .Running →
+      sf.sp = sp0 →
+      traceVRegs sf = traceVRegs s →
+      CalleeSavedGprsPreserved s0 sf →
+      SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) sf
+        (optVecU8Of A out_sret none ∗
+          A.pool ∗ stackAt sp0 decodedMessageStack ∗ P) post) :
+    SepWP ((blkPC_418).rebase (blkPl_418).base (Rust.withPanics ext)) (s0.readReg64 .x30) s
+      (((sp0 - 648#64) ↦₆₄ w648) ∗
+        ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+        ((sp0 - 624#64) ↦₆₄ 16#64) ∗
+        ((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        ((sp0 - 608#64) ↦₆₄ pvLenFinal) ∗
+        memRegion out_sret vecHeaderBytes ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        memRegion (sp0 - 672#64) 24 ∗
+        memRegion (sp0 - 640#64) 8 ∗
+        memRegion (sp0 - 600#64) 504 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗ P) post := by
+  have hdealloc_ep := @decodedMessage_epilogue_dealloc_placed_sepWP lsmpl A ext hdealloc_sat s0 sp0 pv_ptr hsp0
+  try dsimp only [BitVec.ofNat_eq_ofNat] at *
+  have hsp_align : s.sp &&& 15#64 = 0#64 := by
+    rw [hsp]; exact sp672_aligned sp0 hsp0
+  have hout_split : memRegion out_sret vecHeaderBytes =
+      (∃∗ w0 : BitVec 64, out_sret ↦₆₄ w0) ∗ memRegion (out_sret + 8#64) 16 := by
+    rw [show vecHeaderBytes = 8 + 16 from rfl,
+      memRegion_split out_sret 8 16 (by decide),
+      ProofLib.memRegion_eight out_sret]
+  rw [hout_split]
+  wp_pull_exists
+  wp_steps 4
+  have hnone_eq :
+      (out_sret ↦₆₄ 18446744073709551615#64) ∗ memRegion (out_sret + 8#64) 16 =
+        optVecU8Of A out_sret none := by
+    unfold optVecU8Of noneCap; rfl
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      (memRegion (sp0 - 672#64) 24 ∗
+        ((sp0 - 648#64) ↦₆₄ w648) ∗
+        memRegion (sp0 - 640#64) 8 ∗
+        ((sp0 - 632#64) ↦₆₄ out_sret) ∗
+        ((sp0 - 624#64) ↦₆₄ 16#64)) ∗
+      (((sp0 - 608#64) ↦₆₄ pvLenFinal) ∗ memRegion (sp0 - 600#64) 504) ∗
+      (((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗
+        (optVecU8Of A out_sret none ∗ P)) by
+      rw [← hnone_eq]
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine SepWP.weaken_pre
+    (sepConj_mono (memRegion_24_8_8_8_8_entails_56 sp0 w648 out_sret 16#64)
+      (sepConj_mono_left (memRegion_8_504_entails_512 sp0 pvLenFinal))) ?_
+  refine SepWP.weaken_pre
+    (show _ ⊢
+      ((sp0 - 616#64) ↦₆₄ pv_ptr) ∗
+        A.live pv_ptr 256 8 ∗
+        memRegion pv_ptr 256 ∗
+        memRegion (sp0 - 672#64) 56 ∗
+        memRegion (sp0 - 608#64) 512 ∗
+        savedRegsAt sp0 s0 ∗
+        A.pool ∗
+        stackAt (sp0 - 672#64) extHookStack ∗
+        (optVecU8Of A out_sret none ∗ P) by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  refine hdealloc_ep _ (optVecU8Of A out_sret none ∗ P) post
+    (by simp [wp_norm, arm64_norm])
+    (by simp [wp_norm, arm64_norm, hstat])
+    (by simpa [wp_norm, arm64_norm] using hsp)
+    (by simp [wp_norm, arm64_norm])
+    (fun sf hpc_f hstat_f hsp_f htr_f hcs_f => ?_)
+  refine SepWP.weaken_pre
+    (show A.pool ∗ stackAt sp0 decodedMessageStack ∗ (optVecU8Of A out_sret none ∗ P) ⊢
+      optVecU8Of A out_sret none ∗ A.pool ∗ stackAt sp0 decodedMessageStack ∗ P by
+      exact Entails.of_eq (by ac_rfl)) ?_
+  exact hcont sf hpc_f hstat_f hsp_f (by simpa [wp_norm, arm64_norm] using htr_f) hcs_f
+
+end CryptoVerification.SpqrV1.Poly.DecodedMessage

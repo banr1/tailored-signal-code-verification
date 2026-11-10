@@ -1,0 +1,13 @@
+import Symbolic.Specifications.Concrete.MachineEvents
+
+namespace ScratchFixture.P9ExemptRoot
+
+def p9CoreLiteral : BitVec 8 := 0x5a#8
+
+def p9Tag : String := "p9-exempt-marker"
+
+theorem p9_uses_exempt_e (ev : DY.Libsignal.HwEvents.CliEvent) :
+    ev = ev ∧ p9CoreLiteral = 0x5a#8 ∧ p9Tag.length > 0 :=
+  ⟨rfl, rfl, by decide⟩
+
+end ScratchFixture.P9ExemptRoot

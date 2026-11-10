@@ -1,0 +1,13 @@
+{
+  "comment": "Synthetic mutant for Issue 6 (message_decrypt_prekey skips pre_key_store.remove_pre_key): provisioned with a one-time pre-key (with_opk = true), Alice sends an OPK-bearing pre-key message and Bob receives it; on the mutant, one-time-pre-keys/<opk_id> remains non-empty on disk, so the environment leaks Bob's OPK before Bob's reply.",
+  "setup_seed": 5003,
+  "rng_seed": 50030,
+  "with_opk": true,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "opk-handshake"}},
+    {"entry": "recv", "who": 1, "b": {"message_of": 1}},
+    {"entry": "leak", "who": 1, "secret": "opk"},
+    {"entry": "send", "who": 1, "b": {"utf8": "opk-reply"}}
+  ]
+}

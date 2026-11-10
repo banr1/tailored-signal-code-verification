@@ -1,0 +1,7 @@
+namespace ScratchFixture.P10DeniedMod
+
+def secretOffset : Bool → Nat
+  | true => 64
+  | false => 128
+
+end ScratchFixture.P10DeniedMod

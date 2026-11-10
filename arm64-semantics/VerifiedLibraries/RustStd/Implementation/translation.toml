@@ -1,0 +1,37 @@
+# Translation configuration for unmodified Rust 1.98.1 `std` I/O and filesystem routines
+# (`std::fs::read::inner`, `std::fs::write::inner`, `std::io::stdio::stdin`,
+# `<std::io::stdio::Stdin as std::io::Read>::read_to_end`, `std::io::stdio::stdout`,
+# `<std::io::stdio::Stdout as std::io::Write>::write_all`, and
+# `<std::io::stdio::Stdout as std::io::Write>::flush`) and all reachable `std` / `alloc` / `core`
+# helpers and data from the pinned `aarch64-unknown-linux-musl` sysroot:
+#   - `libstd-32d384fccf68bbb7.rlib` (SHA-256 0ab6dccc7d4304f3a0848dadb8820964d86747b75af12f3921f1d48a1d185579)
+#   - `liballoc-33b97f6bdb98e862.rlib` (SHA-256 963b439cd8b6e922258cab604c3b8f0dfc0757fa8552911ddcb3127369422451)
+#   - `libcore-89491010f55f6617.rlib` (SHA-256 3397f27434f891334ee2e29352a2fbab8de590e93b496379ee8bc1ab4b17cca9)
+
+obj_name = "rustStdIo"
+namespace_prefix = "VerifiedLibraries.RustStd"
+obj_file = "RustStd/Generated/RustStdIoObj.lean"
+title = "Rust 1.98.1 `std::fs` / `std::io` runtime (`aarch64-unknown-linux-musl` prebuilt `.rlib`s)"
+hashed_inputs = [
+    "build.sh",
+]
+license_header = [
+    "Copyright (c) The Rust Project Contributors.",
+    "Licensed under the Apache License, Version 2.0 or the MIT license (Rust 1.98.1 aarch64-unknown-linux-musl sysroot).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/rust_std_io.o"]
+
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "std::fs::read::inner",
+    "std::fs::write::inner",
+    "std::io::stdio::stdin",
+    "<std::io::stdio::Stdin as std::io::Read>::read_to_end",
+    "std::io::stdio::stdout",
+    "<std::io::stdio::Stdout as std::io::Write>::write_all",
+    "<std::io::stdio::Stdout as std::io::Write>::flush",
+]

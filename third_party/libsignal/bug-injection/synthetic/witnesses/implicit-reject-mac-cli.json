@@ -1,0 +1,49 @@
+{
+  "comment": "Synthetic mutant for ImplicitReject inner-MAC bypass: Alice initiates and sends 'hello bob'; an active attacker flips a bit in kyber_ciphertext (field 8: 0x42 0xa1 0x0c 0x08, triggering Kyber FO implicit rejection) and overwrites the trailing 8-byte inner SignalMessage MAC (immediately after Bob's serialized address) with 0000000000000000, and Bob runs recv.",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "calls": [
+    {
+      "entry": "init",
+      "b": {
+        "honest_bundle": true
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "hello bob"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "replace": {
+          "or_at": {
+            "message_of": 1
+          },
+          "after": {
+            "hex": "42a10c08"
+          },
+          "offset": 4,
+          "mask": "80"
+        },
+        "find": {
+          "slice": {
+            "message_of": 1
+          },
+          "after": {
+            "hex": "5d3e2f107a8b4c9d8e0fa1b2c3d4e5f601"
+          },
+          "offset": 0,
+          "len": 25
+        },
+        "with": {
+          "hex": "5d3e2f107a8b4c9d8e0fa1b2c3d4e5f6010000000000000000"
+        }
+      }
+    }
+  ]
+}

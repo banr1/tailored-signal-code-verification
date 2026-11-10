@@ -1,0 +1,14 @@
+diff --git a/rust/protocol/src/double_ratchet.rs b/rust/protocol/src/double_ratchet.rs
+index aa49bfe..7923e4a 100644
+--- a/rust/protocol/src/double_ratchet.rs
++++ b/rust/protocol/src/double_ratchet.rs
+@@ -307,9 +307,6 @@ impl RatchetState {
+             chain_key: Some(receiver_chain_key.to_pb()),
+             message_keys: vec![],
+         });
+-        while self.receiver_chains.len() > consts::MAX_RECEIVER_CHAINS {
+-            self.receiver_chains.remove(0);
+-        }
+ 
+         self.sender_chain = Some(SenderChain {
+             ratchet_key: new_sender_key,

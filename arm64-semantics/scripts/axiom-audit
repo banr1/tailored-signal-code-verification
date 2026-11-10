@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# Thin wrapper around `#axiom_audit_modules` (ProofLib/Testing/AxiomAudit/Core.lean).
+#
+# Usage: scripts/axiom-audit [--strict] <ImportModule> [<ModulePrefix>]
+#        scripts/axiom-audit [--strict] --batch <ImportModule>...
+#   Imports <ImportModule> (e.g. `CaseStudies.U128.Theorems`) and reports every user-facing theorem declared in
+#   modules whose name starts with <ModulePrefix> (default: <ImportModule>) that depends on an axiom
+#   outside [propext, Quot.sound, Classical.choice], blaming the lemma that introduced it.
+#   With `--batch`, groups `<ImportModule>`s by standalone Lake package (`CaseStudies/<Lib>` vs root)
+#   and audits all modules within each package in a single `lake lean` invocation. Missing
+#   `VerifiedLibraries.*`, `Equivalence.*`, `FormalRfcs.*`, and `CaseStudies.<Lib>.*`
+#   modules are first built in their standalone Lake package.
+#   With `--modules-file F` (written by `ci-tools audit-plan`), groups the modules listed in F (one
+#   per line) by standalone Lake package and audits exactly those modules (`#axiom_audit_module`,
+#   submodules excluded) in one `lake lean` invocation per package; an empty F is a successful no-op.
+#   `--strict` makes the run fail if any theorem is dirty.
+#   `LAKE_TRUST_CACHED_RUST_EXPORTS` defaults to `true` so warm runs skip re-running `rust-obj2lean`;
+#   pass `LAKE_TRUST_CACHED_RUST_EXPORTS=false` after modifying sources under `CaseStudies/*/Implementation/`.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+bang=""
+batch=0
+modules_file=""
+audit_timeout="${AXIOM_AUDIT_TIMEOUT:-1200}"
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -h|--help)
+      cat <<'EOF'
+Usage:
+  scripts/axiom-audit [--strict] [--timeout <SECS>] <ImportModule> [<ModulePrefix>]
+  scripts/axiom-audit [--strict] [--timeout <SECS>] --batch <ImportModule>...
+  scripts/axiom-audit [--strict] [--timeout <SECS>] --modules-file <F>
+
+Audit Lean modules via `#axiom_audit_modules` for axioms outside `[propext, Quot.sound, Classical.choice]`.
+
+Flags / Options:
+  --strict           Fail (exit non-zero) if any theorem depends on a non-standard axiom (`sorryAx`, etc.)
+  --batch            Import all listed `<ImportModule>`s in a single `lake lean` invocation
+  --modules-file <F> Import and audit exactly the modules listed in <F> (one per line)
+  --timeout <SECS>   Wall-clock timeout in seconds across builds, slot wait, and `lake lean` (default: 1200)
+  -h, --help         Show this help message and exit
+
+Examples:
+  scripts/axiom-audit --strict CaseStudies.U128.Theorems
+  scripts/axiom-audit --strict --batch CaseStudies.U128.Theorems CaseStudies.Hpack.Theorems
+EOF
+      exit 0
+      ;;
+    --strict) bang="!"; shift ;;
+    --batch) batch=1; shift ;;
+    --modules-file) modules_file="${2:?--modules-file needs a path}"; shift 2 ;;
+    --timeout) audit_timeout="${2:?--timeout needs seconds}"; shift 2 ;;
+    --timeout=*) audit_timeout="${1#--timeout=}"; shift ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
+  esac
+done
+t_deadline=$(( SECONDS + audit_timeout ))
+remaining_audit_secs() {
+  local rem=$(( t_deadline - SECONDS ))
+  if (( rem <= 0 )); then
+    return 1
+  fi
+  echo "$rem"
+}
+export LAKE_TRUST_CACHED_RUST_EXPORTS="${LAKE_TRUST_CACHED_RUST_EXPORTS:-true}"
+# Audit only what Lake built: delete `.olean`s that `lake build` did not produce (e.g. written by
+# `lean-sig check --emit-olean`) so `lake lean` below rebuilds them from source.
+rem="$(remaining_audit_secs)" || exit 124
+if [[ -x ./tools/dev/lean-sig/lean-sig ]]; then
+  timeout --kill-after=5 "$rem" ./tools/dev/lean-sig/lean-sig lake-artifacts --purge
+fi
+if [[ -d "$PWD/.lake/build/lib/lean/FormalRfcs" ]]; then
+  find "$PWD/.lake/build/lib/lean/FormalRfcs" -depth -type d -exec rmdir {} + 2>/dev/null || true
+fi
+# Ensure any requested `CaseStudies.<Lib>*` import module is built in its standalone
+# `CaseStudies/<Lib>` package (e.g. cross-shard join barrels in CI `axiom-audit`),
+# matching how root `lake lean` auto-builds root package imports.
+file_imports=()
+if [[ -n "$modules_file" ]]; then
+  if [[ "$batch" -eq 1 || "$#" -ne 0 ]]; then
+    echo "usage: scripts/axiom-audit [--strict] --modules-file <F>" >&2
+    exit 2
+  fi
+  if [[ ! -f "$modules_file" ]]; then
+    echo "scripts/axiom-audit: modules file not found: $modules_file" >&2
+    exit 2
+  fi
+  mapfile -t file_imports < <(grep -v '^[[:space:]]*$' "$modules_file" || true)
+  if [[ "${#file_imports[@]}" -eq 0 ]]; then
+    echo "axiom-audit: no modules to audit"
+    exit 0
+  fi
+  audit_imports=("${file_imports[@]}")
+elif [[ "$batch" -eq 1 ]]; then
+  audit_imports=("$@")
+else
+  audit_imports=("${1:-}")
+fi
+# Missing modules are grouped per package and built with one `lake build` call per package
+# (each `lake` start re-elaborates the workspace configuration and re-checks every trace).
+declare -A missing_by_pkg=()
+missing_pkgs=()
+for mod in "${audit_imports[@]}"; do
+  pkg=""
+  if [[ "$mod" == VerifiedLibraries || "$mod" == VerifiedLibraries.* ]]; then
+    mod_rel="${mod//.//}.olean"
+    if [[ ! -f "$PWD/VerifiedLibraries/.lake/build/lib/lean/$mod_rel" ]]; then
+      pkg="VerifiedLibraries"
+    fi
+  elif [[ "$mod" == Equivalence.* ]]; then
+    mod_rel="${mod//.//}.olean"
+    if [[ ! -f "$PWD/Equivalence/.lake/build/lib/lean/$mod_rel" ]]; then
+      pkg="Equivalence"
+    fi
+  elif [[ "$mod" == FormalRfcs.* ]]; then
+    mod_rel="${mod//.//}.olean"
+    if [[ ! -f "$PWD/FormalRfcs/.lake/build/lib/lean/$mod_rel" ]]; then
+      pkg="FormalRfcs"
+    fi
+  elif [[ "$mod" == CaseStudies.* ]]; then
+    cs_rest="${mod#CaseStudies.}"
+    cs_lib="${cs_rest%%.*}"
+    mod_rel="${mod//.//}.olean"
+    if [[ -f "$PWD/CaseStudies/$cs_lib/lakefile.lean" && ! -f "$PWD/CaseStudies/$cs_lib/.lake/build/lib/lean/$mod_rel" ]]; then
+      pkg="CaseStudies/$cs_lib"
+    fi
+  fi
+  if [[ -n "$pkg" ]]; then
+    if [[ -z "${missing_by_pkg[$pkg]+x}" ]]; then
+      missing_pkgs+=("$pkg")
+      missing_by_pkg[$pkg]="$mod"
+    else
+      missing_by_pkg[$pkg]+=" $mod"
+    fi
+  fi
+done
+for pkg in "${missing_pkgs[@]}"; do
+  read -r -a pkg_mods <<<"${missing_by_pkg[$pkg]}"
+  rem="$(remaining_audit_secs)" || exit 124
+  timeout --kill-after=5 "$rem" lake -d "$PWD/$pkg" build --no-ansi -q "${pkg_mods[@]}"
+done
+tmp="$(mktemp --suffix=.lean)"
+cs_path="$(mktemp -d)"
+clean_cs_symlinks() {
+  local pkg_dir cs_dir pkg_name entry base
+  for pkg_dir in "$PWD"/CaseStudies/*; do
+    cs_dir="$pkg_dir/.lake/build/lib/lean/CaseStudies"
+    [[ -d "$cs_dir" ]] || continue
+    pkg_name="$(basename "$pkg_dir")"
+    for entry in "$cs_dir"/*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      base="$(basename "$entry")"
+      if [[ -L "$entry" || ( "$base" != "$pkg_name" && "$base" != "$pkg_name."* ) ]]; then
+        rm -rf "$entry"
+      fi
+    done
+  done
+}
+trap 'rm -rf "$tmp" "$cs_path"; clean_cs_symlinks' EXIT
+mkdir -p "$cs_path/CaseStudies"
+has_cs=0
+clean_cs_symlinks
+for cs_entry in "$PWD"/CaseStudies/*/.lake/build/lib/lean/CaseStudies/*; do
+  if [[ -e "$cs_entry" && ! -L "$cs_entry" ]]; then
+    ln -snf "$cs_entry" "$cs_path/CaseStudies/$(basename "$cs_entry")"
+    for cs_dir in "$PWD"/CaseStudies/*/.lake/build/lib/lean/CaseStudies; do
+      if [[ -d "$cs_dir" && "$cs_entry" != "$cs_dir/"* ]]; then
+        ln -snf "$cs_entry" "$cs_dir/$(basename "$cs_entry")"
+      fi
+    done
+    has_cs=1
+  fi
+done
+if [[ "$has_cs" -eq 1 ]]; then
+  LEAN_PATH="$cs_path${LEAN_PATH:+:$LEAN_PATH}"
+fi
+# The root package does not `require` the standalone `Equivalence` package (`Equivalence/lakefile.toml`).
+if [[ -d "$PWD/Equivalence/.lake/build/lib/lean/Equivalence" ]]; then
+  LEAN_PATH="$PWD/Equivalence/.lake/build/lib/lean${LEAN_PATH:+:$LEAN_PATH}"
+fi
+# The root package does not `require` the standalone `FormalRfcs` package (`FormalRfcs/lakefile.lean`).
+if [[ -d "$PWD/FormalRfcs/.lake/build/lib/lean/FormalRfcs" ]]; then
+  LEAN_PATH="$PWD/FormalRfcs/.lake/build/lib/lean${LEAN_PATH:+:$LEAN_PATH}"
+fi
+export LEAN_PATH="${LEAN_PATH:-}"
+
+module_pkg_bucket() {
+  local m="$1"
+  local top="${m%%.*}"
+  local rest="${m#*.}"
+  local sub="${rest%%.*}"
+  if [[ "$m" == *.* && -f "$PWD/$top/$sub/lakefile.lean" ]]; then
+    echo "$top/$sub"
+  elif [[ -f "$PWD/$top/lakefile.lean" || -f "$PWD/$top/lakefile.toml" ]]; then
+    echo "$top"
+  else
+    echo "."
+  fi
+}
+
+run_tmp_audit() {
+  local rem
+  rem="$(remaining_audit_secs)" || exit 124
+  if [[ -x ./tools/dev/lean-sig/lean-sig ]]; then
+    timeout --kill-after=5 "$rem" ./tools/dev/lean-sig/lean-sig run -- timeout "$rem" lake lean --no-ansi -q "$tmp" -- -M "$(scripts/lean-mem-policy)"
+  else
+    timeout --kill-after=5 "$rem" lake lean --no-ansi -q "$tmp" -- -M "$(scripts/lean-mem-policy)"
+  fi
+}
+
+if [[ "${#file_imports[@]}" -gt 0 ]]; then
+  buckets=()
+  for mod in "${file_imports[@]}"; do
+    b="$(module_pkg_bucket "$mod")"
+    if [[ " ${buckets[*]} " != *" $b "* ]]; then
+      buckets+=("$b")
+    fi
+  done
+  for b in "${buckets[@]}"; do
+    bucket_mods=()
+    for mod in "${file_imports[@]}"; do
+      if [[ "$(module_pkg_bucket "$mod")" == "$b" ]]; then
+        bucket_mods+=("$mod")
+      fi
+    done
+    {
+      printf 'import ProofLib.Testing.AxiomAudit.Core\n'
+      printf 'import ProofLib.TrustedClosure\n'
+      for mod in "${bucket_mods[@]}"; do
+        printf 'import %s\n' "$mod"
+      done
+      printf '#axiom_audit_module%s' "$bang"
+      for mod in "${bucket_mods[@]}"; do
+        printf ' %s' "$mod"
+      done
+      printf '\n'
+      printf '#trusted_closure_module%s' "$bang"
+      for mod in "${bucket_mods[@]}"; do
+        printf ' %s' "$mod"
+      done
+      printf '\n'
+    } > "$tmp"
+    run_tmp_audit
+  done
+elif [[ "$batch" -eq 1 ]]; then
+  if [[ "$#" -eq 0 ]]; then
+    echo "usage: scripts/axiom-audit [--strict] --batch <ImportModule>..." >&2
+    exit 2
+  fi
+  buckets=()
+  for mod in "$@"; do
+    b="$(module_pkg_bucket "$mod")"
+    if [[ " ${buckets[*]} " != *" $b "* ]]; then
+      buckets+=("$b")
+    fi
+  done
+  for b in "${buckets[@]}"; do
+    bucket_mods=()
+    for mod in "$@"; do
+      if [[ "$(module_pkg_bucket "$mod")" == "$b" ]]; then
+        bucket_mods+=("$mod")
+      fi
+    done
+    {
+      printf 'import ProofLib.Testing.AxiomAudit.Core\n'
+      printf 'import ProofLib.TrustedClosure\n'
+      for mod in "${bucket_mods[@]}"; do
+        printf 'import %s\n' "$mod"
+      done
+      dedup_prefixes=()
+      for mod in "${bucket_mods[@]}"; do
+        subsumed=0
+        for other in "${bucket_mods[@]}"; do
+          if [[ "$mod" == "${other}."* ]]; then
+            subsumed=1
+            break
+          fi
+        done
+        if [[ "$subsumed" -eq 0 && " ${dedup_prefixes[*]} " != *" $mod "* ]]; then
+          dedup_prefixes+=("$mod")
+        fi
+      done
+      printf '#axiom_audit_modules%s' "$bang"
+      for mod in "${dedup_prefixes[@]}"; do
+        printf ' %s' "$mod"
+      done
+      printf '\n'
+      printf '#trusted_closure_modules_batch%s' "$bang"
+      for mod in "${dedup_prefixes[@]}"; do
+        printf ' %s' "$mod"
+      done
+      printf '\n'
+    } > "$tmp"
+    run_tmp_audit
+  done
+else
+  mod="${1:?usage: scripts/axiom-audit [--strict] <ImportModule> [<ModulePrefix>]}"
+  pfx="${2:-$mod}"
+  printf 'import ProofLib.Testing.AxiomAudit.Core\nimport ProofLib.TrustedClosure\nimport %s\n#axiom_audit_modules%s %s\n#trusted_closure_modules%s %s\n' "$mod" "$bang" "$pfx" "$bang" "$pfx" > "$tmp"
+  run_tmp_audit
+fi

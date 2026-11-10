@@ -1,0 +1,9 @@
+{
+  "comment": "Synthetic mutant for Issue 3 (process_prekey_bundle omits set_unacknowledged_pre_key_message): Alice initiates from Bob's honest bundle and sends her first message; stdout is a bare 0x02 SignalMessage instead of a 0x03 PreKeySignalMessage.",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "hello bob"}}
+  ]
+}

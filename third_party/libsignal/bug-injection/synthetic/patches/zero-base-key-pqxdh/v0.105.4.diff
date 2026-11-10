@@ -1,0 +1,47 @@
+diff --git a/rust/protocol/src/pqxdh.rs b/rust/protocol/src/pqxdh.rs
+index 3d9b99d..6c76c81 100644
+--- a/rust/protocol/src/pqxdh.rs
++++ b/rust/protocol/src/pqxdh.rs
+@@ -324,14 +324,6 @@ impl<'a> RecipientParameters<'a> {
+ /// Computes DH shared secrets and KEM decapsulation, then applies the KDF
+ /// to produce keys ready for ratchet initialization.
+ pub(crate) fn pqxdh_accept(parameters: &RecipientParameters) -> Result<HandshakeKeys> {
+-    // Validate the initiator's base key before doing any computation.
+-    if !parameters.their_ephemeral_key.is_canonical() {
+-        return Err(SignalProtocolError::InvalidMessage(
+-            CiphertextMessageType::PreKey,
+-            "incoming base key is invalid".to_owned(),
+-        ));
+-    }
+-
+     let mut secrets = Vec::with_capacity(32 * 6);
+ 
+     secrets.extend_from_slice(&[0xFFu8; 32]); // discontinuity bytes
+@@ -347,21 +339,24 @@ pub(crate) fn pqxdh_accept(parameters: &RecipientParameters) -> Result<Handshake
+         &parameters
+             .our_identity_key_pair
+             .private_key()
+-            .calculate_agreement(&parameters.their_ephemeral_key)?,
++            .calculate_agreement(&parameters.their_ephemeral_key)
++            .unwrap_or_else(|_| Box::new([0u8; 32])),
+     );
+ 
+     secrets.extend_from_slice(
+         &parameters
+             .our_signed_pre_key_pair
+             .private_key
+-            .calculate_agreement(&parameters.their_ephemeral_key)?,
++            .calculate_agreement(&parameters.their_ephemeral_key)
++            .unwrap_or_else(|_| Box::new([0u8; 32])),
+     );
+ 
+     if let Some(our_one_time_pre_key_pair) = &parameters.our_one_time_pre_key_pair {
+         secrets.extend_from_slice(
+             &our_one_time_pre_key_pair
+                 .private_key
+-                .calculate_agreement(&parameters.their_ephemeral_key)?,
++                .calculate_agreement(&parameters.their_ephemeral_key)
++                .unwrap_or_else(|_| Box::new([0u8; 32])),
+         );
+     }
+ 

@@ -1,0 +1,14 @@
+diff --git a/rust/protocol/src/session_management.rs b/rust/protocol/src/session_management.rs
+index d1b18fb..ff1f833 100644
+--- a/rust/protocol/src/session_management.rs
++++ b/rust/protocol/src/session_management.rs
+@@ -258,7 +258,8 @@ pub async fn message_decrypt_prekey<R: Rng + CryptoRng>(
+         ciphertext.message(),
+         CiphertextMessageType::PreKey,
+         csprng,
+-    )?;
++    )
++    .unwrap_or_default();
+ 
+     identity_store
+         .save_identity(

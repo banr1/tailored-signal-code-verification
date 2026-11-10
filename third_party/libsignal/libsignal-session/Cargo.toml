@@ -1,0 +1,52 @@
+[package]
+name = "libsignal-session"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# Rung 7b image (`docs/LIBSIGNAL_SESSION_7B.md`): libsignal v0.105.4's REAL compiled 1:1 session
+# code. `rust-obj2lean` extracts the whole `libsignal-protocol` crate object (compiled with this
+# crate's profile, at the monomorphizations this crate requests) plus this crate's object, and a
+# few non-generic `libsignal_core` functions (`translation.toml`). No upstream source is copied:
+# `src/lib.rs` only calls libsignal's public API so that the generic session code
+# (`message_encrypt::<HookRng>`, `message_decrypt_signal::<HookRng>`, ...) is emitted. Stage 1
+# verifies non-generic upstream methods (`RatchetState::consume_message_key`, ...) that live in
+# the `libsignal-protocol` object; the wrappers exist now so that stages 2-3 need no new image.
+#
+# NOTE: deliberately standalone, like `libsignal-mono`: no `[workspace]` table (the libsignal path
+# dependencies inherit from libsignal's own workspace root).
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# `vendor/libsignal` is a gitignored symlink to a libsignal checkout at tag v0.105.4 (the same one
+# as `libsignal-mono`; `$LIBSIGNAL_SRC`, see `[upstream]` in `translation.toml`).
+libsignal-protocol = { path = "vendor/libsignal/rust/protocol" }
+libsignal-core = { path = "vendor/libsignal/rust/core" }
+# The RNG hook is a `rand_core` 0.9 `RngCore + CryptoRng` (libsignal v0.105.4's lock: 0.9.5).
+rand_core = { version = "=0.9.5", default-features = false }
+# The `libsignal-cli` CLI (`cli/`, with its crates `cli/ratchet` and `cli/handshake`).
+# Not used by this crate's code: separate crates linked after all the others so that this
+# crate's compiled code does not change.
+libsignal-cli = { path = "cli" }
+
+[profile.release]
+# As the other images: one codegen unit, no LTO, panics abort.
+opt-level = 3
+lto = false
+codegen-units = 1
+panic = "abort"
+debug = false
+# As libsignal v0.105.4's root `Cargo.toml:250-260` (the release profile): overflow checks ON,
+# except for `curve25519-dalek`, `sha2` and `hmac`. So `ChainKey::next_chain_key`'s `index + 1`
+# (`ratchet/keys.rs:168`) is a checked add that panics at `u32::MAX`, as the rung 7a model says.
+overflow-checks = true
+
+[profile.release.package.curve25519-dalek]
+overflow-checks = false
+
+[profile.release.package.sha2]
+overflow-checks = false
+
+[profile.release.package.hmac]
+overflow-checks = false

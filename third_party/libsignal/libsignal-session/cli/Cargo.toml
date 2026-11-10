@@ -1,0 +1,43 @@
+[package]
+name = "libsignal-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# The `libsignal-cli` CLI (`src/lib.rs`): one operation of
+# a libsignal 1:1 session per process, on the files of the party's directory. The library holds
+# all of it, including the C `main` that musl calls; the binary (`src/main.rs`) only links it.
+#
+# The tenth crate of the `libsignal-session` image (`../translation.toml`), appended last so that
+# every function of the nine earlier objects keeps its offset. It is a dependency of the parent
+# crate only so that cargo resolves it there: build it from the parent directory, with the
+# parent's `Cargo.lock` and release profile (as the image), e.g.
+# `cargo build --release --locked -p libsignal-cli` (cargo ignores a dependency's own profile).
+#
+# NOTE: standalone like the parent crate: no `[workspace]` table.
+
+[lib]
+crate-type = ["rlib"]
+# No unit tests or doctests: a test harness would define a second `main`.
+test = false
+doctest = false
+
+[[bin]]
+name = "libsignal-cli"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+libsignal-protocol = { path = "../vendor/libsignal/rust/protocol" }
+# libsignal's four RNG-drawing calls (`init`, `send`, `recv`), each crate with its own RNG over the
+# coins (`src/coins.rs`); `ratchet/src/lib.rs` says why they are separate crates.
+libsignal-cli-ratchet = { path = "ratchet" }
+libsignal-cli-handshake = { path = "handshake" }
+# The process I/O (`io/src/lib.rs`), the CLI's module `io`: a crate of its own, translated
+# separately by `io/translation.toml` (`SignalSessionIoPlacedObj`) so `libsignalSessionObj` offsets
+# do not move; its four functions are externs of `libsignalSessionObj` (`io/Cargo.toml`).
+libsignal-cli-io = { path = "io" }
+# Same versions as the other crates of the image (libsignal v0.105.4's lock), so cargo feature
+# unification leaves their compiled code unchanged.
+rand_core = { version = "=0.9.5", default-features = false }
+# libsignal's store traits are `#[async_trait(?Send)]`; same version as libsignal's lock.
+async-trait = "0.1.79"

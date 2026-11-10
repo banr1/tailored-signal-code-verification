@@ -1,0 +1,8 @@
+import ScratchFixture.P10DeniedMod
+
+namespace ScratchFixture.P10ProofMod
+
+theorem trigger_eq_realization : ScratchFixture.P10DeniedMod.secretOffset true = 64 := by
+  simp [ScratchFixture.P10DeniedMod.secretOffset]
+
+end ScratchFixture.P10ProofMod

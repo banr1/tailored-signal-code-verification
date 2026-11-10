@@ -1,0 +1,7 @@
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.P3Wrapper
+
+def WrappedStatePred : Prop := ∀ (s : Arm64.State), s = s
+
+end ScratchFixture.P3Wrapper

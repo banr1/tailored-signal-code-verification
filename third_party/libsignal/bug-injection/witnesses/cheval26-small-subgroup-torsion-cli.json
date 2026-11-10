@@ -1,0 +1,19 @@
+{
+  "comment": "#450's cheval26-small-subgroup-torsion-comp on the libsignal-cli CLI: Alice's first pre-key message delivered to Bob (no session yet) with EIGHT_TORSION[1] added to its base key. The CLI run's honest base key is abbb904f2c8f86f71332b8059313b1a1cbad7b332d85927b485e5b0e1049c34d (the same as the C-ABI witness cheval26-small-subgroup-torsion, same setup and RNG seeds); the tweaked key is curve25519-dalek 5.0.0's MontgomeryPoint::to_edwards(0) + EIGHT_TORSION[1], to_montgomery, as recorded there.",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "torsion_shifts": [
+    [
+      "abbb904f2c8f86f71332b8059313b1a1cbad7b332d85927b485e5b0e1049c34d",
+      "35714908dedd4e23c19560e1e0bd644b00b72f418097f8bb55cff8abf8b2887a"
+    ]
+  ],
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "hello bob"}},
+    {"entry": "recv", "who": 1, "b": {
+      "replace": {"message_of": 1},
+      "find": {"hex": "abbb904f2c8f86f71332b8059313b1a1cbad7b332d85927b485e5b0e1049c34d"},
+      "with": {"hex": "35714908dedd4e23c19560e1e0bd644b00b72f418097f8bb55cff8abf8b2887a"}}}
+  ]
+}

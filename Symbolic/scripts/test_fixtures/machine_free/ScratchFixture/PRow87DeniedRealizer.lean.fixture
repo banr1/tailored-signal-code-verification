@@ -1,0 +1,50 @@
+import Lean
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.PRow87DeniedRealizer
+
+theorem deniedParentThm (b : Bool) : (!!b) = b :=
+  Bool.not_not b
+
+-- (e) User-written theorem with `_simp_<digits>` suffix (has `declRange`): must NOT redirect.
+theorem _root_.Nat.add_comm._simp_7 : (0 : Nat) = 0 :=
+  rfl
+
+open Lean Meta in
+#eval show MetaM Unit from do
+  unless (← getEnv).contains ``Classical.not_not do
+    throwError "missing Classical.not_not"
+  let trueConst := mkConst ``True
+  let eqTrueTrue ← mkEq trueConst trueConst
+  let reflTrue ← mkEqRefl trueConst
+  -- (a) Core parent (`Classical.not_not`), no declRange, `.thmInfo`, pure value: redirects -> clean.
+  addDecl <| Declaration.thmDecl {
+    name := `Classical.not_not._simp_8701
+    levelParams := []
+    type := eqTrueTrue
+    value := reflTrue
+  }
+  -- (c) Core parent (`Classical.not_not`), no declRange, `.thmInfo`, value mentions `Arm64.State`: F2 walks -> tainted.
+  let stateType := mkConst ``Arm64.State
+  let sortType := mkSort (Level.succ Level.zero)
+  let badVal := Expr.letE `_row87MachineWitness sortType stateType reflTrue false
+  addDecl <| Declaration.thmDecl {
+    name := `Classical.not_not._simp_8703
+    levelParams := []
+    type := eqTrueTrue
+    value := badVal
+  }
+  -- (d) Core parent (`Classical.not_not`), no declRange, `.axiomInfo` (not `.thmInfo`), pure type: must NOT redirect -> tainted.
+  addDecl <| Declaration.axiomDecl {
+    name := `Classical.not_not._simp_8704
+    levelParams := []
+    type := trueConst
+    isUnsafe := false
+  }
+  for nm in #[`Classical.not_not._simp_8701, `Classical.not_not._simp_8703, `Classical.not_not._simp_8704] do
+    if (Lean.declRangeExt.find? (← getEnv) nm).isSome then
+      throwError s!"unexpected declRange on {nm}"
+  if (Lean.declRangeExt.find? (← getEnv) `Nat.add_comm._simp_7).isNone then
+    throwError "expected declRange on user-written Nat.add_comm._simp_7"
+
+end ScratchFixture.PRow87DeniedRealizer

@@ -1,0 +1,170 @@
+# Registry of the bug-injection framework (`Symbolic/BugInjection/README.md`). Read by
+# `scripts/bug_injection.py`. Google-authored; the patches it names are libsignal's (AGPL-3.0-only).
+#
+# [[bug]]: a Rust diff.
+#   id, title, source       what the bug is and where it is described
+#   fix_commit, fix_subject the upstream libsignal commit that fixed it (`verify-patches` checks it)
+#   upstream_patch          the fix commit's diff, byte-identical to
+#                           https://github.com/signalapp/libsignal/commit/<fix_commit>.diff; applied
+#                           REVERSED it reintroduces the bug
+#   upstream_patch_sha256   its sha256
+#   port_patch              the same reversal ported to the base, used when the upstream diff does not
+#                           apply there
+#
+# [[witness]]: evidence that a bug violates a statement.
+#   id                      names `Symbolic/BugInjection/{Witnesses,Disproofs}/<Id in CamelCase>.lean`
+#   bug                     the [[bug]] it is for
+#   statement               the fully qualified Lean statement the obligation negates on the mutant's
+#                           bytes (a key of `STATEMENTS` in `scripts/bug_injection.py`, which names
+#                           the replayer's environment and the mutant-bytes constant)
+#   inputs                  the environment's calls and the attacker's inputs (`witnesses/<id>.json`)
+#   expect                  `live`, `refuted-by-control` or `not-expressible` (what `run` should report)
+#   spec_half               the expected truth of the spec half (S) at the generated, unpinned `fits`
+#                           (a note, not a claim; the carrier proofs use a pinned `fits` instead)
+#   notes                   why
+
+[base]
+# The libsignal revision every image in this repository is compiled from.
+libsignal_tag = "v0.105.4"
+libsignal_commit = "b2a5c30f3245c1bcad04b27b1e752a38321c793d"
+
+[[bug]]
+id = "cheval26-small-subgroup"
+title = "PQXDH responder does not check that the initiator's base key is canonical (replay by point mangling)"
+source = "Cheval, Jacomme, Richards 2026, section 3.2.2 (small subgroup attack, footnote 2) and 3.2.3"
+fix_commit = "5293caa6cad81566b80f3c3731857bedaa78737b"
+fix_subject = "protocol: Check that base keys are torsion free and in range"
+upstream_patch = "patches/cheval26-small-subgroup/upstream-5293caa6cad81566b80f3c3731857bedaa78737b.diff"
+upstream_patch_sha256 = "2437dc5426eb4a62e50811f8c7bbc792a41d34826db466c3761441e02ff257c8"
+port_patch = "patches/cheval26-small-subgroup/v0.105.4.diff"
+
+[[bug]]
+id = "cheval26-weak-state"
+title = "A PreKey message that fails on its new session is trial-decrypted with older sessions, persisting the unconfirmed (weak) state"
+source = "Cheval, Jacomme, Richards 2026, section 3.2.1 (weak states forced storage, trace B.1-B.4, footnote 1)"
+fix_commit = "cd361186fba60c83186262d91b03af608fb8c7c3"
+fix_subject = "Don't bother trying to decrypt a PreKey message with older sessions"
+upstream_patch = "patches/cheval26-weak-state/upstream-cd361186fba60c83186262d91b03af608fb8c7c3.diff"
+upstream_patch_sha256 = "50175b57da72e6dcb989fe116894f9b626f74d3ba11c733a29f1172df2287a14"
+port_patch = "patches/cheval26-weak-state/v0.105.4.diff"
+
+[[witness]]
+id = "cheval26-weak-state-cli"
+bug = "cheval26-weak-state"
+statement = "DY.Libsignal.Composed.Security.SignalSessionSecurePlaced"
+inputs = "witnesses/cheval26-weak-state-cli.json"
+expect = "live"
+spec_half = "open (not claimed true)"
+notes = """
+evs is the `libsignal-cli` CLI counterpart of `cheval26-weak-state` (7 `CliEvent.run` entries):
+Alice clears her session file (`CliTraces.clear`, emitting no event per D7) after sending her second
+S1 pre-key message, re-initiates S2, and sends an S2 pre-key message; evs ends with Bob's `recv`
+run (`exit = some (0, "second")`) on a PreKey message that splices S2's PQXDH header (ek2, ct2)
+onto Alice's S1 inner SignalMessage while Bob holds his S1 session file. `ValidCall` admits this
+`recv` under D2(c) (`BobCallAllowed` holds beforehand since `bobOff = false`, and the trace ends
+right after this `PreKeyNoMatch` call).
+(1) No model run satisfies `Explains` on evs: the final `recv` exited `0`, so `RunRejected` is
+false and `MatchesEvents` must apply `RunMatches`. On any explanation of the prefix, Bob completed
+only S1's `bobStart` (`bobDoneBaseKeys tr = [ek1]`), whereas the spliced message carries `ek2 ≠ ek1`
+(`¬ known`), so `PathFaithfulAt` forces `s = .bobStart` (ruling out `.messageDecrypt` and
+`.messageDecryptSkipped`, while whisper decrypt is closed by the `0x03` tag). Then `RunMatches`
+requires `s.ok tr = true`, which fails because `bobStart`'s symbolic MAC check uses S2's handshake
+keys on S1's inner message (distinct terms; evs has no `.env (.leak ..)`).
+(2) On `CollisionAfterExplainedPrefix` excuses, honest prefixes have an `Explains` witness (under `UA-1` `GhostWF`
+on `.rng` draws), so the universal prefix quantifiers in `PreKeyStartCollidesOrRejects` and `SignalMsgAcceptedOnlyViaCollision`
+are non-vacuous; `¬ KnownBaseKeyOn` closes the pre-key `SignalMsgAcceptedOnlyViaCollision` branch (modelling
+cd361186), `ImplicitReject` is closed because `ct2` is an honest Kyber ciphertext to Bob, and
+`KyberMismatch` is closed by `CompKyberCorrectOn` since `ct2 ∈ setup.kyberCts`. What remains are
+`MemoCollisionOn` and `MacTagForgeryOrCollision` on `bobTrials`: `cliCompShape` quantifies (S)
+universally over all `S : OpaqueSymbolSemantics` (`ghostOk := True`), and `bobTrials` on the final call reads
+`S.chainKey` on S2's SPQR state, which the prefix does not pin on the wire; thus an adversarial `S`
+could make an excuse branch hold until `OpaqueSymbolSemantics`'s SPQR fields are pinned. Accordingly (S) is left open
+and not claimed true.
+"""
+
+[[witness]]
+id = "cheval26-weak-state-idx1-cli"
+bug = "cheval26-weak-state"
+statement = "DY.Libsignal.Composed.Security.SignalSessionSecurePlaced"
+inputs = "witnesses/cheval26-weak-state-idx1-cli.json"
+expect = "live"
+spec_half = "open (not claimed true)"
+notes = """
+The `libsignal-cli` CLI counterpart of #450's `cheval26-weak-state-idx1` (schedule b): the spliced
+inner message carries SPQR index 1, the lowest index an honest send can carry. Alice initiates S1 and
+sends two S1 pre-key messages (calls 1, 2); Bob's first `recv` (call 3, no session file yet) takes the
+second, storing the skipped counter-0 / SPQR-index-1 keys in his S1 session file; Alice clears her
+session file (`CliTraces.clear`), initiates S2 and sends an S2 pre-key message (calls 4, 5); τ ends
+with Bob's `recv` (call 6) of a canonical PreKey message (`CanonicalPreKey`, D3) that splices S2's
+PQXDH header (ek2, ct2) onto Alice's FIRST S1 inner SignalMessage while Bob holds his S1 session file,
+then `rng` (32 coin bytes) and `accept`. The mutant accepts call 6 through the stored skipped keys;
+the control rejects it. `ValidCall` admits call 6 under D2(c) (`BobCallAllowed` holds since
+`bobOff = false`, and the trace ends right after this `PreKeyNoMatch` call).
+(1) No model run explains any `CoinSplit` cut of τ, as for `cheval26-weak-state-cli`: the final
+call can only be matched by `bobStart` (whisper decrypt is closed by the 0x03 tag, and wrapped
+`.preKeyInner` decrypt on S1 is closed because S1's `sessionBaseKeys` is `[ek1]` while the spliced
+message carries `ek2 ≠ ek1`), and `bobStart` rejects because its symbolic MAC check uses S2's
+handshake keys on S1's inner message (distinct terms; τ has no `leak`).
+(2) On `CollisionAfterExplainedPrefix` excuses, `¬ KnownBaseKey` closes the pre-key `SignalMsgAcceptedOnlyViaCollision` branch,
+`ImplicitReject` is closed because `ct2` is an honest Kyber ciphertext to Bob, and `KyberMismatch` is
+closed by `CompKyberCorrectOn` since `ct2 ∈ setup.kyberCts`. What remains are `MemoCollisionOn` and
+`MacTagForgeryOrCollision` on `bobTrials`: `cliCompShape` quantifies (S) universally over all `S : OpaqueSymbolSemantics`
+(`ghostOk := True`), and `bobTrials` reads `S.chainKey` on S2's SPQR state, which the prefix does not
+pin on the wire. So (S) is left open and not claimed true.
+"""
+
+[[witness]]
+id = "cheval26-small-subgroup-high-bit-cli"
+bug = "cheval26-small-subgroup"
+statement = "DY.Libsignal.Composed.Security.SignalSessionSecurePlaced"
+inputs = "witnesses/cheval26-small-subgroup-high-bit-cli.json"
+expect = "live"
+spec_half = "open (not claimed true)"
+notes = """
+The `libsignal-cli` CLI counterpart of #450's `cheval26-small-subgroup-high-bit-comp`. Alice runs
+`init` and `send`; τ ends with Bob's `recv` (call 2, no session file yet) of Alice's pre-key message
+with the top bit of its base key set, then `rng` (32 coin bytes) and `accept`. The spliced key is still
+`0x05 ‖ 32 bytes`, so the input meets `CanonicalPreKey` and `ValidCall`. The mutant accepts (X25519
+ignores the top bit, so Bob derives Alice's keys); the control rejects (the base key is out of range).
+(1) No model run explains any `CoinSplit` cut of τ: the whole-protocol model's `bobStart` runs
+`PQXDH.bobHandshake`, whose `isCanonicalKey` guard rejects `x25519Variant (dhPk e) v`; any other term
+with those bytes yields different agreement terms, so the symbolic MAC check fails; τ has no `leak`.
+(2) On `CollisionAfterExplainedPrefix` excuses: Bob has no session before call 2, so `KnownBaseKey` fails and only
+`PreKeyStartCollidesOrRejects` can excuse the accept; `KyberMismatch` fails on τ's ciphertext by
+`CompKyberCorrectOn`, and `ImplicitReject` fails (Alice's ciphertext decapsulates in the model);
+`X25519PubCanonical` (in `ExternContractsHoldCli`) keeps every interpreted public key below p, so the
+high-bit bytes are not an honest public key. What is NOT argued (as in #450): (a) `BobSessionStartCollidesOrImplicitRejects`'s
+`MemoCollisionOn`, `BobOwnKeyMacGuess`, `KemGuess` and `KemAlias` read `S : OpaqueSymbolSemantics` outputs (`kemSS`,
+SPQR keys) that `cliCompShape` quantifies universally (`ghostOk := True`) and τ does not pin;
+(b) `KyberCollisionAt`: `cliCompFits` pins Kyber only on τ's ciphertexts (`CompKyberCorrectOn`). Either
+could make (S) false. So (S) is left open and not claimed true.
+"""
+
+[[witness]]
+id = "cheval26-small-subgroup-torsion-cli"
+bug = "cheval26-small-subgroup"
+statement = "DY.Libsignal.Composed.Security.SignalSessionSecurePlaced"
+inputs = "witnesses/cheval26-small-subgroup-torsion-cli.json"
+expect = "live"
+spec_half = "open (not claimed true)"
+notes = """
+The `libsignal-cli` CLI counterpart of #450's `cheval26-small-subgroup-torsion-comp`. Alice runs
+`init` and `send`; τ ends with Bob's `recv` (call 2, no session file yet) of Alice's pre-key message
+with a point of order 8 added to the base key (`ekA` shifted to `ekB`, the witness JSON's
+`torsion_shifts`, recorded in `setup.torsionShifts`), then `rng` (32 coin bytes) and `accept`. The
+shifted key is `0x05 ‖ 32 bytes` below p, so the input meets `CanonicalPreKey` and `ValidCall`. The
+mutant accepts (X25519 clamping clears the cofactor, so Bob derives Alice's keys); the control rejects
+(the base key is not torsion free).
+(1) No model run explains any `CoinSplit` cut of τ: `bobStart` runs `PQXDH.bobHandshake`, whose
+`isCanonicalKey` guard rejects `x25519TorsionVariant (dhPk e) v t`; any other term with those bytes
+yields different agreement terms, so the symbolic MAC check fails; τ has no `leak`.
+(2) On `CollisionAfterExplainedPrefix` excuses: `ExternContractsHoldCli` carries `X25519TorsionShiftsRejected`,
+so no interpreted honest public key is a torsion shift of another; `KnownBaseKey` fails (no session
+before call 2), `KyberMismatch` fails by `CompKyberCorrectOn`, `ImplicitReject` fails. What is NOT
+argued: (a) the `OpaqueSymbolSemantics`-dependent `BobSessionStartCollidesOrImplicitRejects` branches and `KyberCollisionAt`, as for
+`cheval26-small-subgroup-high-bit-cli`; (b) `cliCompFits` does not carry #450's proof-layer
+`TorsionShiftsRecorded` (the interpretation's `torsionShift` need not give the recorded `ekB`; #443
+deleted it from the trusted `fits`, and #450 re-added it only in the untrusted `CompFitsPin.lean`), so
+the torsion variant need not stand for `ekB` in an adversarial interpretation. So (S) is left open and
+not claimed true.
+"""

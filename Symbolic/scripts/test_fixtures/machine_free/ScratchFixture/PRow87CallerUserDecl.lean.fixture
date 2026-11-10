@@ -1,0 +1,8 @@
+import ScratchFixture.PRow87DeniedRealizer
+
+namespace ScratchFixture.PRow87CallerUserDecl
+
+theorem prow87_user_decl : (0 : Nat) = 0 :=
+  Nat.add_comm._simp_7
+
+end ScratchFixture.PRow87CallerUserDecl

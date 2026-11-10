@@ -1,0 +1,79 @@
+# Legacy D6 snapshot-mutant base link lock (retired from the shipped `libsignal-cli` ELF).
+# Consumed ONLY by `scripts/cli-elf` snapshot mode and `scripts/bug_injection.py` (`build_mutant_elf`).
+#
+# NOTE: The shipped `.GeneratedLean/cli-elf/libsignal-cli.elf` (pinned in
+# `LibsignalBinary/Specifications/SignalSession/CliElf.lean`) is built with stock `ld.lld` by
+# `scripts/cli-elf-stock --stdbin` from `cli-elf/stock/inputs_stock_stdbin.lock` + `m4_stock.lock`.
+snapshot_mutant_only = true
+
+rustc_version = "1.98.1"
+lld_version_prefix = "LLD 22.1.8 "
+zig_version = "0.16.0"
+libsignal_tag = "v0.105.4"
+
+# `arm64-semantics/scripts/fetch-upstream-sources.sh musl-string` archive pin (musl 1.2.5)
+musl_tarball_name = "musl-1.2.5.tar.gz"
+musl_tarball_sha256 = "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4"
+
+# Zero-unsafe, zero-`build.rs` `StdBin` harness crate (`snapshot-link --main-rust`, `self-contained/libc.a` mallocng)
+main_rust_manifest = "third_party/libsignal/libsignal-session/cli-elf/std-main/Cargo.toml"
+main_rust_manifest_sha256 = "a37b4f59c7255c070a56e8004b376d994670edb16d1497fe84da533079f1f999"
+main_rust_lock_path = "third_party/libsignal/libsignal-session/cli-elf/std-main/Cargo.lock"
+main_rust_lock_sha256 = "52c5d4e8130d50403c27acf71296a7f96c1d1bc97d963f9d25c2c1224297ef19"
+main_rust_src_path = "third_party/libsignal/libsignal-session/cli-elf/std-main/src/main.rs"
+main_rust_src_sha256 = "2a701cea94f482bc49fcbaf27358fa2d072ae7922175f7da22b34484756292fd"
+
+# Stock `rustc 1.98.1` `std::sys::alloc::unix` global-allocator shims with co-located 1-hop `__rust_*` symbols,
+# plus `#976` (`72913f0d92`) `SignalSessionIoPlacedObj` bounded `read_file` / `read_stdin` C-ABI loops (`signal_session_io.S`).
+rdl_shim_path = "third_party/libsignal/libsignal-session/cli-elf/rdl_shim.S"
+rdl_shim_sha256 = "4bcf5875bb22e61dd02c6efb50fe7dc798060e2b9fdf7856031b15125fe8f5f3"
+signal_session_io_path = "third_party/libsignal/libsignal-session/cli-elf/signal_session_io.S"
+signal_session_io_sha256 = "f2b5bad1e930dad6824b4e699a0b701d9ed99cb4e403ba495a6f6c4ada76558c"
+
+# `rust-obj2lean` / `snapshot-link` image configuration and D2 `page_separate_data = true` outputs (624 blocks, SC-1 Route I-append)
+config_path = "third_party/libsignal/libsignal-session/translation.toml"
+page_separate_data = true
+image_code_size = 558920
+image_code_sha256 = "16cd5e9075435b73c8e2be75ebca73a6cb7008a5f0344409bb010d39bb1b19f1"
+image_data_size = 69720
+image_data_sha256 = "0e8093490a0d027bfc714e38f6f8b5bf2b36e9dbbb867f9f7b2370ddb34f4137"
+
+# `cli/io` placed export manifest pins (`SignalSessionIoIndex.json` + `SignalSessionIoPlacedObj.{lean,bin}`)
+io_placed_lean_path = ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.lean"
+io_placed_bin_path = ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.bin"
+io_placed_bin_size = 1664
+io_placed_bin_sha256 = "d807ad1db41c5c282c08ac315c6e0d6aa2c8fbd7305723af1901051b12531d9b"
+io_index_path = ".GeneratedLean/GeneratedLean/SignalSessionIoIndex.json"
+
+# `snapshot-link` layout and native musl-string + `rdl_shim` + `signal_session_io` parameters (F3 mallocng + T3 IO + SC-1 Route I-append):
+# `memcpy` and `memset` are omitted from `native_only` so `rustc 1.98.1`'s `self-contained/libc.a`
+# supplies `mallocng` blocks `memcpy` and `memset`.
+base = 0x400000
+stubs = "zero"
+expected_stub_count = 139
+musl_string = true
+musl_string_config_path = "third_party/libsignal/libsignal-session/cli-elf/musl_string_native.toml"
+musl_string_config_sha256 = "d9d233a2e518a9fe5d6f48f5f4955c12b5c954ff232f9cce58a7e43f151c968f"
+branch_stubs = [
+    "_RNvCs1njKG4L9aB3_7___rustc12___rust_alloc",
+    "_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc",
+    "_RNvCs1njKG4L9aB3_7___rustc14___rust_realloc",
+    "_RNvCs1njKG4L9aB3_7___rustc19___rust_alloc_zeroed",
+    "_RNvCs1njKG4L9aB3_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+    "_RNvCs9Xul1Kjr0QF_16libsignal_cli_io9read_file",
+    "_RNvCs9Xul1Kjr0QF_16libsignal_cli_io10read_stdin",
+    "memcpy",
+    "memset",
+]
+# Note (GK R-c): `"signal_session_io"` names the legacy `[targets.signal_session_io]` `.S`
+# assembly target (`cli-elf/signal_session_io.S`, calling `bl __snapstub_17`) in
+# `musl_string_native.toml`, retired from the shipped `libsignal-cli` stock build (which links
+# the `libsignal-cli-io` crate object directly) and retained here solely for D6 snapshot mutants.
+native_only = ["memmove", "memcmp", "bcmp", "rdl_shim", "signal_session_io"]
+strip_runtime_debug = true
+
+# Pinned `arm64-semantics` submodule commit (engine v0.51.2) and F3 CLI ELF size + SHA-256.
+engine_commit = "c2ef2f44e5988bf39d73cbf7fb5c784417818bd3"
+arm64_semantics_commit = "c2ef2f44e5988bf39d73cbf7fb5c784417818bd3"
+elf_size = 981608
+elf_sha256 = "e35abe2a39b292d0aa181acab357b1d4335f6bbd2d156619ae299241a8384020"

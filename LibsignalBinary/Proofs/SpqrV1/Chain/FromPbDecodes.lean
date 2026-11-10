@@ -1,0 +1,36 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import GeneratedLean.LibsignalSessionCode -- shake: keep
+import ProofLib.GenDecodes
+
+/-!
+# Instruction Decode Trees for `<spqr::chain::Chain>::from_pb` and `into_pb`
+
+Isolates `gen_decodes` for `<spqr::chain::Chain>::from_pb` and `<spqr::chain::Chain>::into_pb`
+so downstream proof files do not unpickle `libsignalSessionCode_tree`.
+-/
+
+@[expose] public section
+
+namespace CryptoVerification.SpqrV1.ChainProofs
+
+open Arm64 ProofLib ProofLib.ProgramReflection
+
+namespace FromPbDecodes
+gen_decodes libsignalSessionCode_tree libsignalSessionBin [0x5ac7c → 0x5b11c]
+end FromPbDecodes
+
+namespace IntoPbDecodes
+gen_decodes libsignalSessionCode_tree libsignalSessionBin [0x5b11c → 0x5b4d8]
+end IntoPbDecodes
+
+end CryptoVerification.SpqrV1.ChainProofs

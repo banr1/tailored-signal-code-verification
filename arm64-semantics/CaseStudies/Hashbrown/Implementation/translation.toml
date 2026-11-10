@@ -1,0 +1,57 @@
+# Translation configuration for `CaseStudies/Hashbrown/Implementation` (`rust-obj2lean`).
+#
+# Extracts and links the `hashbrown-verified` wrapper crate together with upstream
+# `hashbrown` v0.17.1 (`default-features = false`, zero external dependencies).
+
+crates = ["hashbrown-verified", "hashbrown"]
+target = "aarch64-unknown-linux-musl"
+obj_name = "hashbrown"
+obj_file = "Generated/HashbrownObj.lean"
+namespace_prefix = "CaseStudies.Hashbrown"
+page_separate_data = true
+hashed_inputs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "build.rs", "src/lib.rs", "src/main.rs"]
+license_header = [
+    "Machine code in this file is compiled from `hashbrown` v0.17.1",
+    "(https://github.com/rust-lang/hashbrown) at tag v0.17.1, via the thin wrapper crate",
+    "`CaseStudies/Hashbrown/Implementation`. It is therefore a derived work of hashbrown:",
+    "",
+    "  Copyright 2016 Amanieu d'Antras and The Rust Project Developers.",
+    "  SPDX-License-Identifier: MIT OR Apache-2.0",
+    "",
+    "Upstream source and licenses (`LICENSE-MIT`, `LICENSE-APACHE`) are in",
+    "`third_party/hashbrown-0.17.1/`.",
+]
+
+[upstream]
+name = "hashbrown"
+repo_url = "https://github.com/rust-lang/hashbrown.git"
+tag = "v0.17.1"
+commit = "c62a63a61b7caf2de8f9ecb7b06a66b0ab6bdf3d"
+vendor_symlink = "vendor/hashbrown"
+probe_path = "Cargo.toml"
+env_var = "HASHBROWN_SRC"
+no_clone_env_var = "HASHBROWN_NO_CLONE"
+home_subdir = "sw/hashbrown"
+
+# Multi-block placed library (`HashbrownPlacedObj.lean`), pinned ELF bytes (`HashbrownElfObj.lean`),
+# and placement witness with its `LinkedIn` proof (`HashbrownPlacedWitness.lean`) in the consolidated
+# safe-Rust `std` + stock `musl` `mallocng` executable `CaseStudies/Hashbrown/Implementation/hashbrown_cli.elf`
+# (`cargo +1.98.1 build --release --locked --target aarch64-unknown-linux-musl`).
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "hashbrown_new",
+    "hashbrown_with_capacity",
+    "hashbrown_insert",
+    "hashbrown_get",
+    "hashbrown_contains_key",
+    "hashbrown_remove",
+    "hashbrown_len",
+    "hashbrown_is_empty",
+    "hashbrown_clear",
+    "hashbrown_drop",
+]
+elf = "hashbrown_cli.elf"
+elf_sha256 = "9c0415743bb4bfd56f8166494597606ec6682f063f31acb02f27749c10089d92"
+linked = true

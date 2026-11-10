@@ -1,0 +1,181 @@
+{
+  "comment": "Synthetic mutant for evicted-chain skipped keys: Alice sends counter 0 ('skip-0') and counter 1 ('init-1') on her initial ratchet chain pk_A0; Bob receives counter 1 (caching skipped key (pk_A0, 0)), then 5 ping-pong DH ratchets push pk_A1..pk_A5 onto Bob's receiver_chains and evict pk_A0 from clean v0.105.4's MAX_RECEIVER_CHAINS = 5 window; finally Bob receives delayed counter 0 ('skip-0').",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "calls": [
+    {
+      "entry": "init",
+      "b": {
+        "honest_bundle": true
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "skip-0"
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "init-1"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 2
+      }
+    },
+    {
+      "entry": "send",
+      "who": 1,
+      "b": {
+        "utf8": "b0"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 0,
+      "b": {
+        "message_of": 4
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "a1"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 6
+      }
+    },
+    {
+      "entry": "send",
+      "who": 1,
+      "b": {
+        "utf8": "b1"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 0,
+      "b": {
+        "message_of": 8
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "a2"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 10
+      }
+    },
+    {
+      "entry": "send",
+      "who": 1,
+      "b": {
+        "utf8": "b2"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 0,
+      "b": {
+        "message_of": 12
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "a3"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 14
+      }
+    },
+    {
+      "entry": "send",
+      "who": 1,
+      "b": {
+        "utf8": "b3"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 0,
+      "b": {
+        "message_of": 16
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "a4"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 18
+      }
+    },
+    {
+      "entry": "send",
+      "who": 1,
+      "b": {
+        "utf8": "b4"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 0,
+      "b": {
+        "message_of": 20
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "a5"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 22
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 1
+      }
+    }
+  ]
+}

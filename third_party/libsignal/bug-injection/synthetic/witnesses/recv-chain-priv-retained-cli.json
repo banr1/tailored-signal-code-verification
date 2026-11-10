@@ -1,0 +1,15 @@
+{
+  "comment": "Synthetic mutant for Issue 4b (RatchetState::dh_ratchet_step retains rotated-out sender_private_key in receiver_chains[1].sender_ratchet_key_private, protobuf field 7.2): after Bob replies and Alice steps her DH ratchet (rotating out dhs_A0), the environment leaks receiver_chains[1].sender_ratchet_key_private from Alice's session file before Alice's next send.",
+  "setup_seed": 23209,
+  "rng_seed": 43,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "m0"}},
+    {"entry": "recv", "who": 1, "b": {"message_of": 1}},
+    {"entry": "send", "who": 1, "b": {"utf8": "m1"}},
+    {"entry": "recv", "who": 0, "b": {"message_of": 3}},
+    {"entry": "leak", "who": 0, "secret": {"recv_chain_priv": 1}},
+    {"entry": "send", "who": 0, "b": {"utf8": "m2"}},
+    {"entry": "recv", "who": 1, "b": {"message_of": 6}}
+  ]
+}

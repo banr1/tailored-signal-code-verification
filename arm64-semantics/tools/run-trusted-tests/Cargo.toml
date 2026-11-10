@@ -1,0 +1,22 @@
+[package]
+name = "run-trusted-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Differential validator comparing the Lean 4 ARM64 formal semantics (`diff_eval`)
+# against Unicorn Engine (`UC_ARCH_ARM64` / QEMU AArch64) and LLVM (`llvm-mc`).
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+isa-oracle = { path = "../isa-oracle" }
+object = "0.36"
+sail-aarch64 = { path = "../sail-aarch64" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+unicorn-aarch64 = { path = "../unicorn-aarch64" }
+unicorn-engine = { version = "=2.1.3", default-features = false, features = ["arch_aarch64"] }
+walkdir = "2"
+which = "7"

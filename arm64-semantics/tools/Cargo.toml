@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = [
+    "isa-oracle",
+    "proc-snapshot",
+    "run-trusted-tests",
+    "rust-obj2lean",
+    "sail-aarch64",
+    "snapshot-link",
+    "tcb-map",
+    "unicorn-aarch64",
+]
+exclude = ["dev"]
+
+# Fast-compiling release profile for all host verification tools.
+[profile.release]
+opt-level = 3
+lto = "off"
+debug = false
+strip = "none"
+
+# Keep debug assertions and fast incremental rebuilds for `cargo test`, while optimizing heavy
+# dependencies (`regex`, `syn`, `serde`, `object`, `gimli`, `walkdir`, `toml`, `unicorn-engine`).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

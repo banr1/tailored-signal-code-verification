@@ -1,0 +1,9 @@
+import ScratchFixture.PF2Realizer
+
+namespace ScratchFixture.PF2Caller
+
+theorem pf2_caller :
+    ScratchFixture.PF2Pure.pureFn Nat.zero = ScratchFixture.PF2Pure.pureFn Nat.zero :=
+  ScratchFixture.PF2Pure.pureFn.eq_1
+
+end ScratchFixture.PF2Caller

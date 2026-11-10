@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Thin wrapper around `#trusted_closure_modules` (ProofLib/TrustedClosure.lean).
+#
+# Usage: scripts/trusted-closure [--strict] [--timeout <SECS>] <ImportModule> [<ModulePrefix>]
+#   Imports <ImportModule> (e.g. `CaseStudies.Hashbrown.Spec`) and prints each top/spec
+#   theorem's transitive constant closure restricted to `Arm64.Trusted.*` modules.
+#   `--strict` fails closed if any non-alloc bundle or theorem reaches `Arm64.Trusted.Syscalls.Alloc`.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+bang=""
+closure_timeout="${TRUSTED_CLOSURE_TIMEOUT:-1200}"
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -h|--help)
+      cat <<'EOF'
+Usage:
+  scripts/trusted-closure [--strict] [--timeout <SECS>] <ImportModule> [<ModulePrefix>]
+
+Print per-theorem `Arm64.Trusted.*` constant closures via `#trusted_closure_modules`
+(`ProofLib/TrustedClosure.lean`), failing closed under `--strict` if any non-allocator syscall
+bundle or theorem reaches `Arm64.Trusted.Syscalls.Alloc`.
+
+Flags / Options:
+  --strict         Fail (exit non-zero) on any non-alloc leak into `Arm64.Trusted.Syscalls.Alloc`
+  --timeout <SECS> Wall-clock timeout in seconds (default: 1200)
+  -h, --help       Show this help message and exit
+
+Examples:
+  scripts/trusted-closure CaseStudies.Hashbrown.Spec
+  scripts/trusted-closure --strict ProofLib.Testing.TrustedClosure
+EOF
+      exit 0
+      ;;
+    --strict) bang="!"; shift ;;
+    --timeout) closure_timeout="${2:?--timeout needs seconds}"; shift 2 ;;
+    --timeout=*) closure_timeout="${1#--timeout=}"; shift ;;
+    *) echo "trusted-closure: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+mod="${1:?usage: scripts/trusted-closure [--strict] [--timeout <SECS>] <ImportModule> [<ModulePrefix>]}"
+pfx="${2:-$mod}"
+export LAKE_TRUST_CACHED_RUST_EXPORTS="${LAKE_TRUST_CACHED_RUST_EXPORTS:-true}"
+tmp="$(mktemp --suffix=.lean)"
+cs_path="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$cs_path"' EXIT
+mkdir -p "$cs_path/CaseStudies"
+has_cs=0
+for pkg_dir in "$PWD"/CaseStudies/*; do
+  cs_dir="$pkg_dir/.lake/build/lib/lean/CaseStudies"
+  [[ -d "$cs_dir" ]] || continue
+  pkg_name="$(basename "$pkg_dir")"
+  for entry in "$cs_dir"/*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    base="$(basename "$entry")"
+    if [[ -L "$entry" || ( "$base" != "$pkg_name" && "$base" != "$pkg_name."* ) ]]; then
+      rm -rf "$entry"
+    fi
+  done
+done
+for cs_entry in "$PWD"/CaseStudies/*/.lake/build/lib/lean/CaseStudies/*; do
+  if [[ -e "$cs_entry" && ! -L "$cs_entry" ]]; then
+    ln -snf "$cs_entry" "$cs_path/CaseStudies/$(basename "$cs_entry")"
+    for cs_dir in "$PWD"/CaseStudies/*/.lake/build/lib/lean/CaseStudies; do
+      if [[ -d "$cs_dir" && "$cs_entry" != "$cs_dir/"* ]]; then
+        ln -snf "$cs_entry" "$cs_dir/$(basename "$cs_entry")"
+      fi
+    done
+    has_cs=1
+  fi
+done
+if [[ "$has_cs" -eq 1 ]]; then
+  LEAN_PATH="$cs_path${LEAN_PATH:+:$LEAN_PATH}"
+fi
+export LEAN_PATH="${LEAN_PATH:-}"
+printf 'import ProofLib.TrustedClosure\nimport %s\n#trusted_closure_modules%s %s\n' "$mod" "$bang" "$pfx" > "$tmp"
+if [[ -x ./tools/dev/lean-sig/lean-sig ]]; then
+  timeout --kill-after=5 "$closure_timeout" ./tools/dev/lean-sig/lean-sig run -- timeout "$closure_timeout" lake lean --no-ansi -q "$tmp" -- -M "$(scripts/lean-mem-policy)"
+else
+  timeout --kill-after=5 "$closure_timeout" lake lean --no-ansi -q "$tmp" -- -M "$(scripts/lean-mem-policy)"
+fi

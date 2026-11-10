@@ -1,0 +1,10 @@
+import Lean
+
+namespace ScratchFixture.PF5DeniedParent
+
+opaque parentFn : Nat → Nat := fun x => x
+
+#eval show Lean.CoreM Unit from
+  Lean.enableRealizationsForConst ``ScratchFixture.PF5DeniedParent.parentFn
+
+end ScratchFixture.PF5DeniedParent

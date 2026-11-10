@@ -1,0 +1,28 @@
+# Translation configuration for `Arm64/Testing/Fixtures/adequacy-tour` (`rust-obj2lean`).
+
+crates = ["adequacy_tour"]
+obj_name = "adequacy_tour"
+namespace_prefix = "Testing.Generators"
+hashed_inputs = ["Cargo.toml", "Cargo.lock", "src/lib.rs"]
+
+[[targets]]
+name = "adequacy_tour_fns"
+lean_file = "Arm64/Testing/Generators/AdequacyTourFixture.lean"
+sub_namespace = "AdequacyTour"
+prog_name = "adequacyTourBin"
+title = "`Arm64/Testing/Fixtures/adequacy-tour` (`src/lib.rs`)"
+lemma_allowlist = [
+    ".*",
+]
+
+[placed]
+placed_only = true
+exports = [
+    "adequacy_tour::read_fixed_addr",
+    "adequacy_tour::nonzero_exit_one",
+    "adequacy_tour::stack_spill_verify",
+    "adequacy_tour::write_own_code_bytes",
+    "adequacy_tour::assert_getrandom_gt_5",
+    "adequacy_tour::mmap_write_and_verify",
+    "adequacy_tour::verify_own_code_bytes",
+]

@@ -1,0 +1,3151 @@
+#!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Legacy D6 snapshot-mutant ELF builder (`snapshot-link --stubs zero`), plus `--stock` forwarding.
+
+NOTE: The shipped `.GeneratedLean/cli-elf/libsignal-cli.elf` (pinned in `CliElf.lean`) is built
+with stock LLVM `ld.lld` via `scripts/cli-elf-stock --stdbin` (or `scripts/cli-elf --stock ...`).
+Snapshot mode below (`cli-elf/inputs.lock`) is retained solely for D6 bug-injection mutants.
+
+Modes:
+  scripts/cli-elf --build [--out-dir DIR] [--engine DIR] [--no-strip-runtime-debug]
+                  [--image-dir DIR --crate-root DIR]
+      Build `.GeneratedLean/cli-elf/libsignal-cli.elf` (and `link.json`) from source via engine
+      `snapshot-link` (`StdBin` `--main-rust` + `rdl_shim.S` + `self-contained/libc.a`), verifying
+      all pinned toolchain versions and input SHA-256 digests in
+      `third_party/libsignal/libsignal-session/cli-elf/inputs.lock` and running the B2/F3
+      branch-stub + zero-stub, `.img.text == code.bin` (on all non-branch words),
+      dynamic `cli/io` placed-manifest (`SignalSessionIoIndex.json` + `SignalSessionIoPlacedObj`),
+      and 0-reachable-`memcmp` verification. With `--image-dir` and `--crate-root` (plus an
+      explicit `--out-dir` != `.GeneratedLean/cli-elf`, bug injection only): link the
+      objects of `--crate-root`'s `libsignal-session` copy and verify against `--image-dir`'s
+      `rust-obj2lean` export while enforcing all other `inputs.lock` pins and F3 checks.
+
+  scripts/cli-elf --verify-pin [--elf PATH] [--lean-mod PATH] [--lock-only]
+      Out-of-Lean SHA-256 check: fail-closed check against `inputs.lock` (and, unless
+      `--lock-only` is passed, the single `sha256 "<64 lowercase hex>"` pin line in
+      `LibsignalBinary/Specifications/SignalSession/CliElf.lean`).
+
+  scripts/cli-elf --verify-io-manifest
+      Out-of-Lean check of `.GeneratedLean/GeneratedLean/SignalSessionIo{Index.json,PlacedObj.lean,PlacedObj.bin}`
+      against `inputs.lock` (5 blocks = 1,412 B, dynamic extern list from generated artifacts with
+      0 hand-written extern names, `handle_error` crate-hash match against `img0`, and
+      `__rust_no_alloc_shim_is_unstable_v2` resolution consistency per GK row 178).
+
+  scripts/cli-elf --check [--elf PATH] [--engine DIR] [--no-strip-runtime-debug] [--cold-zig-cache]
+      Determinism & embedding check: rebuild a second copy from source in a fresh workdir at a
+      different path depth (optionally with an empty isolated `ZIG_GLOBAL_CACHE_DIR` /
+      `ZIG_LOCAL_CACHE_DIR`), verify `.img.text` + branch stubs + zero stubs + dynamic
+      `cli/io` placed manifest + 0 reachable `memcmp` stub references, and require `cmp` byte
+      identity (0 differing bytes).
+
+  scripts/cli-elf --self-test-alias-guard [--elf PATH]
+      Run positive + negative self-tests for the GK row 185 (`A1–A7` + SR `S1–S5`) `check_std_elf`
+      Block-621 `MergeFunctions` alias wrapper on isolated scratch copies.
+
+Disclosure (GK rows 183 & 185, SR S1–S5):
+  `snapshot-link/src/verify.rs::check_std_elf` (l.845–859) scans `.symtab` substrings (`"gimli"`,
+  `"_Unwind_Backtrace"`, `"sigaltstack"`) as a name proxy for unwind/backtrace code. Under
+  `rustc 1.98.1`'s LLVM `MergeFunctions`, exactly one pinned mangled symbol
+  (`PINNED_STD_MERGEFUNC_ALIAS`, `<RawVec<gimli::read::unit::AttributeValue<..., usize>>>::grow_one`)
+  is emitted as a zero-overhead `.symtab` `STT_FUNC` alias at `+0x0` of `PINNED_STD_MERGEFUNC_PRIMARY`
+  (`<RawVec<Vec<u8>>>::grow_one`, `0x48837c`, `104` B), with `0` gimli/unwind bytes in the binary.
+  Its `104` B body is Block `621` (`libsignalSessionPlacedCode621`) covered by
+  `CliElfCodeMatchesPlaced` (`libsignalSessionMultiLib`), and no other forbidden name is accepted.
+  Accepted until engine fix B (`verify.rs:845`) lands at M3, after which this wrapper branch is
+  deleted (paired with a matching `DEVIATIONS.md` / `TRUSTED_BASE.md` disclosure in the `142(c)` PR).
+
+Storage rule (`COMMON_BRIEF` §1): temporary work directories are created strictly under
+`${XDG_CACHE_HOME:-$HOME/.cache}/cli-elf-tmp` (never `/tmp`) and cleaned up on exit.
+"""
+from __future__ import annotations
+
+import argparse
+import bisect
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from typing import Any
+
+
+DEFAULT_ELF_NAME = "libsignal-cli.elf"
+DEFAULT_REL_OUT_DIR = pathlib.Path(".GeneratedLean/cli-elf")
+DEFAULT_REL_ELF = DEFAULT_REL_OUT_DIR / DEFAULT_ELF_NAME
+DEFAULT_REL_LOCK = pathlib.Path("third_party/libsignal/libsignal-session/cli-elf/inputs.lock")
+DEFAULT_REL_LEAN_MOD = pathlib.Path("LibsignalBinary/Specifications/SignalSession/CliElf.lean")
+DEFAULT_REL_STRING_INC = pathlib.Path("third_party/libsignal/libsignal-session/cli-elf/string-include")
+DEFAULT_REL_ENGINE = pathlib.Path("arm64-semantics")
+DEFAULT_REL_IO_PLACED_BIN = pathlib.Path(".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.bin")
+DEFAULT_REL_IO_PLACED_LEAN = pathlib.Path(".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.lean")
+DEFAULT_REL_IO_INDEX = pathlib.Path(".GeneratedLean/GeneratedLean/SignalSessionIoIndex.json")
+DEFAULT_REL_IO_ASM = pathlib.Path("third_party/libsignal/libsignal-session/cli-elf/signal_session_io.S")
+DEFAULT_EXPECTED_STUB_COUNT = 139
+
+# Leading `//` comment block of the rendered `signal_session_io.S`: the Google license header
+# (`scripts/license_headers.py` `render("slash")`), the file's provenance and the generator banner.
+# It is one contiguous run of `//` lines, which `_strip_leading_asm_banner` removes as a whole, and
+# it carries no code, so it does not change the assembled object.
+IO_ASM_HEADER_LINES = (
+    "// Copyright 2026 Google LLC",
+    "//",
+    "// All code is licensed under the Apache License, Version 2.0 (the \"Apache 2.0\"); you may not"
+    " use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the"
+    " License at https://www.apache.org/licenses/LICENSE-2.0",
+    "//",
+    "// Unless required by applicable law or agreed to in writing, software distributed under the"
+    " License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,"
+    " either express or implied. See the License for the specific language governing permissions and",
+    "// limitations under the License.",
+    "//",
+    "// Machine code compiled from `third_party/libsignal/libsignal-session/cli/io/src/lib.rs`",
+    "// (Google-authored; copies no upstream `libsignal` source), plus inlined Rust `core`/`alloc`",
+    "// code under MIT OR Apache-2.0. See `third_party/libsignal/README.md`.",
+    "//",
+    "// Generated deterministically by `./scripts/cli-elf --render-io-asm` from"
+    " SignalSessionIoPlacedObj.{lean,bin}.",
+    "// DO NOT EDIT BY HAND; CI verifies `--check-io-asm` produces an empty diff (SR-48(a)).",
+)
+
+PIN_LINE_RE = re.compile(r'^\s*sha256\s+"([0-9a-f]{64})"\s*$')
+ANY_SHA256_KW_RE = re.compile(r"^\s*sha256\b")
+FILE_BYTES_ELF_RE = re.compile(r'file_bytes%\s+"[^"]*libsignal-cli\.elf"')
+OBJ_SYM_PAIR_RE = re.compile(r'\("((?:[^"\\]|\\.)*)",\s*(\d+)\)')
+OBJ_STUB_PAIR_RE = re.compile(r'\("((?:[^"\\]|\\.)*)",\s*(0x[0-9a-fA-F]+|\d+)\)')
+IO_SLICE_RE = re.compile(
+    r'def\s+(signalSessionIoPlacedCode\d+)\s*:\s*List\s*\(BitVec\s+8\)\s*:=\s*'
+    r'include_bytes%\s+"SignalSessionIoPlacedObj\.bin"\s+(\d+)\s+(\d+)'
+)
+IO_SLICE_DOC_RE = re.compile(
+    r'/--\s*The code bytes of block `\d+` \(`[^`:]*:\.text\.(?:unlikely\.)?(_R[A-Za-z0-9_]+)`\)\.\s*-/\s*'
+    r'def\s+(signalSessionIoPlacedCode\d+)\b'
+)
+IO_RELOC_RE = re.compile(
+    r'\{\s*off\s*:=\s*(\d+),\s*kind\s*:=\s*\.(\w+),\s*sym\s*:=\s*"([^"]+)"'
+    r'(?:\s*,\s*addend\s*:=\s*(-?\d+))?\s*\}'
+)
+IO_SYM_RE = re.compile(r'\("([^"]+)",\s*(0x[0-9a-fA-F]+|\d+)\)')
+IO_EXPORT_PAIR_RE = re.compile(r'\("([^"]+)",\s*"([^"]+)"\)')
+
+
+def get_cache_tmp_root() -> pathlib.Path:
+    xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+    base = pathlib.Path(xdg) if xdg else (pathlib.Path.home() / ".cache")
+    tmp_root = base / "cli-elf-tmp"
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    return tmp_root
+
+
+def sha256_file(path: pathlib.Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fp:
+        while chunk := fp.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_sha256_entry(repo_root: pathlib.Path, lock: dict[str, Any], path_key: str, sha_key: str) -> pathlib.Path:
+    rel = str(lock[path_key])
+    p = repo_root / rel
+    if not p.is_file():
+        raise RuntimeError(f"missing pinned input ({path_key}): {p}")
+    got = sha256_file(p)
+    exp = str(lock[sha_key]).strip().lower()
+    if got != exp:
+        raise RuntimeError(f"{p} sha256 {got} != inputs.lock {sha_key}={exp}")
+    return p
+
+
+def strip_lean_comments(text: str) -> list[tuple[int, str]]:
+    """Return `(1-based line_no, code_without_comments)` for every line in `text`."""
+    out: list[tuple[int, str]] = []
+    depth = 0
+    for idx, raw_line in enumerate(text.splitlines(), 1):
+        pieces: list[str] = []
+        pos = 0
+        in_str = False
+        i = 0
+        n = len(raw_line)
+        while i < n:
+            if depth == 0 and raw_line[i] == '"':
+                bs = 0
+                j = i - 1
+                while j >= pos and raw_line[j] == "\\":
+                    bs += 1
+                    j -= 1
+                if bs % 2 == 0:
+                    in_str = not in_str
+                i += 1
+                continue
+            if not in_str:
+                if depth == 0 and raw_line.startswith("--", i):
+                    pieces.append(raw_line[pos:i])
+                    pos = n
+                    break
+                if raw_line.startswith("/-", i):
+                    if depth == 0:
+                        pieces.append(raw_line[pos:i])
+                    depth += 1
+                    i += 2
+                    continue
+                if depth > 0 and raw_line.startswith("-/", i):
+                    depth -= 1
+                    i += 2
+                    if depth == 0:
+                        pos = i
+                    continue
+            i += 1
+        if depth == 0 and pos <= n:
+            pieces.append(raw_line[pos:])
+        out.append((idx, "".join(pieces)))
+    if depth != 0:
+        raise ValueError("unterminated `/- ... -/` block comment in Lean file")
+    return out
+
+
+def parse_b2_elf_pin(lean_mod_path: pathlib.Path) -> str:
+    """Fail-closed parser for the single `sha256 "<64 lowercase hex>"` pin in `CliElf.lean`."""
+    if not lean_mod_path.is_file():
+        raise ValueError(f"pin module does not exist: {lean_mod_path}")
+    text = lean_mod_path.read_text(encoding="utf-8")
+    stripped_lines = strip_lean_comments(text)
+    code_only = "\n".join(code for _, code in stripped_lines)
+
+    fb_matches = FILE_BYTES_ELF_RE.findall(code_only)
+    if len(fb_matches) != 1:
+        raise ValueError(
+            f"{lean_mod_path}: expected exactly 1 `file_bytes% \"...libsignal-cli.elf\"` in code, "
+            f"found {len(fb_matches)}"
+        )
+
+    pins: list[tuple[int, str]] = []
+    for line_no, code in stripped_lines:
+        if not code.strip():
+            continue
+        m = PIN_LINE_RE.match(code)
+        if m is not None:
+            pins.append((line_no, m.group(1)))
+        elif ANY_SHA256_KW_RE.match(code):
+            raise ValueError(
+                f"{lean_mod_path}:{line_no}: malformed `sha256` pin line `{code.strip()}` "
+                "(expected `sha256 \"<64 lowercase hex>\"` on its own line)"
+            )
+
+    if len(pins) != 1:
+        raise ValueError(
+            f"{lean_mod_path}: expected exactly 1 `sha256 \"<64 lowercase hex>\"` pin line, "
+            f"found {len(pins)}"
+        )
+    return pins[0][1]
+
+
+def verify_pin(
+    elf_path: pathlib.Path,
+    lean_mod_path: pathlib.Path | None,
+    lock_path: pathlib.Path | None = None,
+) -> int:
+    expected_pin: str | None = None
+    expected_size: int | None = None
+
+    if lean_mod_path is not None:
+        try:
+            expected_pin = parse_b2_elf_pin(lean_mod_path)
+        except ValueError as exc:
+            print(f"cli-elf --verify-pin: FAIL: {exc}", file=sys.stderr)
+            return 1
+
+    if lock_path is not None:
+        if not lock_path.is_file():
+            print(f"cli-elf --verify-pin: FAIL: lock file not found: {lock_path}", file=sys.stderr)
+            return 1
+        with lock_path.open("rb") as fp:
+            lock = tomllib.load(fp)
+        lock_elf_sha = str(lock.get("elf_sha256", "")).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", lock_elf_sha):
+            print(
+                f"cli-elf --verify-pin: FAIL: invalid elf_sha256={lock_elf_sha!r} in {lock_path}",
+                file=sys.stderr,
+            )
+            return 1
+        if "elf_size" in lock:
+            expected_size = int(lock["elf_size"])
+        if expected_pin is not None and lock_elf_sha != expected_pin:
+            print(
+                f"cli-elf --verify-pin: FAIL: {lock_path} elf_sha256={lock_elf_sha!r} != "
+                f"{lean_mod_path} pin={expected_pin}",
+                file=sys.stderr,
+            )
+            return 1
+        if expected_pin is None:
+            expected_pin = lock_elf_sha
+
+    if expected_pin is None:
+        print("cli-elf --verify-pin: FAIL: neither Lean pin module nor lock_path supplied", file=sys.stderr)
+        return 1
+
+    if not elf_path.is_file():
+        print(f"cli-elf --verify-pin: FAIL: ELF file not found: {elf_path}", file=sys.stderr)
+        return 1
+
+    actual = sha256_file(elf_path)
+    size = elf_path.stat().st_size
+    if expected_size is not None and size != expected_size:
+        print(
+            f"cli-elf --verify-pin: FAIL: size mismatch for {elf_path}: got {size} B, expected {expected_size} B",
+            file=sys.stderr,
+        )
+        return 1
+    if actual != expected_pin:
+        src_desc = str(lean_mod_path) if lean_mod_path is not None else str(lock_path)
+        print(
+            f"cli-elf --verify-pin: FAIL: SHA-256 mismatch for {elf_path} ({size} bytes)\n"
+            f"  expected ({src_desc}): {expected_pin}\n"
+            f"  actual   ({elf_path}): {actual}",
+            file=sys.stderr,
+        )
+        return 1
+
+    link_json_path = elf_path.with_name("link.json")
+    if link_json_path.is_file():
+        meta = json.loads(link_json_path.read_text(encoding="utf-8"))
+        elf_meta = meta.get("elf", {})
+        if elf_meta.get("sha256") != expected_pin:
+            print(
+                f"cli-elf --verify-pin: FAIL: {link_json_path} elf.sha256={elf_meta.get('sha256')} != {expected_pin}",
+                file=sys.stderr,
+            )
+            return 1
+
+    pin_note = f", lean_mod={lean_mod_path.name}" if lean_mod_path is not None else ", lock-only"
+    print(f"cli-elf --verify-pin: OK ({elf_path}: {size} bytes, sha256={actual}{pin_note})")
+    return 0
+
+
+def find_zig_binary(expected_version: str) -> pathlib.Path:
+    candidates: list[pathlib.Path] = []
+    if env_zig := os.environ.get("ZIG", "").strip():
+        candidates.append(pathlib.Path(env_zig))
+    if which_zig := shutil.which("zig"):
+        candidates.append(pathlib.Path(which_zig))
+    for extra in (
+        pathlib.Path.home() / ".local" / "bin" / "zig",
+        pathlib.Path.home() / ".cache" / "arm64-toolchains" / f"zig-linux-x86_64-{expected_version}" / "zig",
+    ):
+        candidates.append(extra)
+    for cand in candidates:
+        if cand.is_file() and os.access(cand, os.X_OK):
+            out = subprocess.run([str(cand), "version"], capture_output=True, text=True, check=True)
+            ver = out.stdout.strip()
+            if ver == expected_version:
+                return cand
+    raise RuntimeError(
+        f"zig {expected_version} not found (checked $ZIG, PATH, ~/.local/bin/zig, ~/.cache/arm64-toolchains)"
+    )
+
+
+def resolve_pinned_toolchain(lock: dict[str, Any], tmp_dir: pathlib.Path) -> dict[str, str]:
+    """Verify `rustc`, sysroot `ld.lld`, sysroot `llvm-objcopy`, and `zig` against `inputs.lock`."""
+    env = os.environ.copy()
+    env["TMPDIR"] = str(tmp_dir)
+    env.pop("RUST_OBJ2LEAN_PERTURB_BYTES", None)
+    env.pop("RUST_BACKTRACE", None)
+    env.pop("RUST_LIB_BACKTRACE", None)
+    env["CARGO_BUILD_JOBS"] = env.get("CARGO_BUILD_JOBS", "8")
+
+    rustc_vv = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True, env=env).stdout
+    release = ""
+    for line in rustc_vv.splitlines():
+        if line.startswith("release:"):
+            release = line.split(":", 1)[1].strip()
+            break
+    if release != lock["rustc_version"]:
+        raise RuntimeError(f"rustc release mismatch: expected {lock['rustc_version']!r}, got {release!r}")
+
+    tlibdir = subprocess.run(
+        ["rustc", "--print", "target-libdir"], capture_output=True, text=True, check=True, env=env
+    ).stdout.strip()
+    sysroot_bin = pathlib.Path(tlibdir).parent / "bin"
+    lld = sysroot_bin / "gcc-ld" / "ld.lld"
+    objcopy = sysroot_bin / "llvm-objcopy"
+    if not (lld.is_file() and os.access(lld, os.X_OK)):
+        raise RuntimeError(f"pinned sysroot ld.lld not found at {lld}")
+    if not (objcopy.is_file() and os.access(objcopy, os.X_OK)):
+        raise RuntimeError(f"pinned sysroot llvm-objcopy not found at {objcopy}")
+
+    lld_ver = subprocess.run([str(lld), "--version"], capture_output=True, text=True, check=True, env=env).stdout.strip()
+    if not lld_ver.startswith(lock["lld_version_prefix"]):
+        raise RuntimeError(
+            f"sysroot ld.lld version mismatch: expected prefix {lock['lld_version_prefix']!r}, got {lld_ver!r}"
+        )
+    subprocess.run([str(objcopy), "--version"], capture_output=True, text=True, check=True, env=env)
+
+    zig = find_zig_binary(lock["zig_version"])
+    env["LLD"] = str(lld)
+    env["LLVM_OBJCOPY"] = str(objcopy)
+    env["ZIG"] = str(zig)
+    return env
+
+
+def ensure_musl_tarball_verified(engine_dir: pathlib.Path, lock: dict[str, Any], env: dict[str, str]) -> None:
+    fetch_script = engine_dir / "scripts" / "fetch-upstream-sources.sh"
+    if not fetch_script.is_file():
+        raise RuntimeError(f"engine fetch script missing: {fetch_script}")
+    subprocess.run([str(fetch_script), "musl-string"], check=True, env=env)
+
+    upstream_cache = pathlib.Path(
+        env.get("ARM64_UPSTREAM_CACHE")
+        or (pathlib.Path(env.get("XDG_CACHE_HOME") or (pathlib.Path.home() / ".cache")) / "arm64-verification-engine")
+    )
+    exp_sha = lock["musl_tarball_sha256"]
+    tar_name = lock["musl_tarball_name"]
+    archive = upstream_cache / "archives" / f"{exp_sha}-{tar_name}"
+    if not archive.is_file():
+        raise RuntimeError(f"expected verified musl archive not found at {archive}")
+    got_sha = sha256_file(archive)
+    if got_sha != exp_sha:
+        raise RuntimeError(f"musl tarball sha256 mismatch: expected {exp_sha}, got {got_sha}")
+
+
+def engine_tool_cmd(
+    engine_dir: pathlib.Path,
+    bin_name: str,
+    env: dict[str, str] | None = None,
+) -> list[str]:
+    manifest = engine_dir / "tools" / "Cargo.toml"
+    release_bin = engine_dir / "tools" / "target" / "release" / bin_name
+    if bin_name == "snapshot-link":
+        build_cmd = [
+            "cargo", "build", "--release", "--locked",
+            "--manifest-path", str(manifest),
+            "--bin", "snapshot-link",
+        ]
+        build_res = subprocess.run(
+            build_cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if build_res.returncode != 0:
+            if build_res.stdout:
+                sys.stderr.write(build_res.stdout)
+            if build_res.stderr:
+                sys.stderr.write(build_res.stderr)
+            captured = "\n".join(
+                part.strip()
+                for part in (build_res.stdout, build_res.stderr)
+                if part and part.strip()
+            )
+            detail = f":\n{captured}" if captured else ""
+            raise RuntimeError(
+                f"cargo build --release --locked --bin snapshot-link failed "
+                f"(rc={build_res.returncode}){detail}"
+            )
+        if not (release_bin.is_file() and os.access(release_bin, os.X_OK)):
+            raise RuntimeError(
+                f"cargo build succeeded for snapshot-link, but executable binary not found at {release_bin}"
+            )
+        return [str(release_bin)]
+    if release_bin.is_file() and os.access(release_bin, os.X_OK):
+        return [str(release_bin)]
+    return [
+        "cargo", "run", "--release", "--quiet", "--locked",
+        "--manifest-path", str(manifest),
+        "--bin", bin_name,
+        "--",
+    ]
+
+
+def parse_elf64_header_and_pt_loads(elf_bytes: bytes) -> tuple[int, list[tuple[int, int, int, int, int]]]:
+    """Return `(e_entry, [(p_offset, p_vaddr, p_filesz, p_memsz, p_flags), ...])` for `PT_LOAD` segments."""
+    if len(elf_bytes) < 64 or elf_bytes[:4] != b"\x7fELF":
+        raise ValueError("not an ELF binary")
+    ei_class, ei_data = elf_bytes[4], elf_bytes[5]
+    if ei_class != 2 or ei_data != 1:
+        raise ValueError(f"expected ELF64 little-endian, got class={ei_class} data={ei_data}")
+    e_machine, = struct.unpack_from("<H", elf_bytes, 18)
+    if e_machine != 183:  # EM_AARCH64
+        raise ValueError(f"expected EM_AARCH64 (183), got {e_machine}")
+    e_entry, e_phoff = struct.unpack_from("<QQ", elf_bytes, 24)
+    e_phentsize, e_phnum = struct.unpack_from("<HH", elf_bytes, 54)
+    if e_phentsize < 56:
+        raise ValueError(f"unexpected e_phentsize={e_phentsize}")
+    segs: list[tuple[int, int, int, int, int]] = []
+    for i in range(e_phnum):
+        off = e_phoff + i * e_phentsize
+        p_type, p_flags, p_offset, p_vaddr, _p_paddr, p_filesz, p_memsz, _p_align = struct.unpack_from(
+            "<IIQQQQQQ", elf_bytes, off
+        )
+        if p_type == 1:  # PT_LOAD
+            segs.append((p_offset, p_vaddr, p_filesz, p_memsz, p_flags))
+    return e_entry, segs
+
+
+def parse_elf64_pt_loads(elf_bytes: bytes) -> list[tuple[int, int, int, int, int]]:
+    return parse_elf64_header_and_pt_loads(elf_bytes)[1]
+
+
+FORBIDDEN_STD_SYMS: tuple[str, ...] = ("gimli", "_Unwind_Backtrace", "sigaltstack")
+# `snapshot-link/src/main.rs` returns `anyhow::Result<()>` from `fn main()`, which formats
+# `verify.rs:856`'s `"std ELF symbol audit failed: found unwind/backtrace symbols in .symtab: <L>"`
+# on `stderr` with Rust's `"Error: "` prefix.
+STD_SYM_AUDIT_PREFIX = "Error: std ELF symbol audit failed: found unwind/backtrace symbols in .symtab:"
+PINNED_STD_MERGEFUNC_ALIAS = (
+    "_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVec"
+    "INtNtNtCslhx8g8CthFc_5gimli4read4unit14AttributeValue"
+    "INtNtBR_12endian_slice11EndianSliceNtNtBT_9endianity12LittleEndianEjEE"
+    "8grow_oneCsfr5T3GFabw_3std"
+)
+PINNED_STD_MERGEFUNC_PRIMARY = (
+    "_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecINtNtB7_3vec3VechEE8grow_oneCsfr5T3GFabw_3std"
+)
+PINNED_STD_FINISH_GROW = (
+    "_RNvMs5_NtCs69KKACWg7bl_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsfr5T3GFabw_3std"
+)
+PINNED_BLOCK621_IMG_OFF = 0x8837C
+PINNED_BLOCK621_SIZE = 104
+PINNED_BLOCK622_IMG_OFF = 0x883E4
+PINNED_HANDLE_ERROR_SYM = "_RNvNtCs69KKACWg7bl_5alloc7raw_vec12handle_error"
+PINNED_HANDLE_ERROR_RELOC_COUNT = 4
+PLACED_CODE621_RE = re.compile(
+    r'def\s+libsignalSessionPlacedCode621\s*:\s*List\s*\(BitVec\s+8\)\s*:=\s*'
+    r'include_bytes%\s+"LibsignalSessionPlacedObj\.bin"\s+(\d+)\s+(\d+)'
+)
+
+
+def accept_snapshot_link_exit(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    cmd: list[str],
+    built_elf: pathlib.Path,
+    built_json: pathlib.Path,
+    run_started_ns: int,
+) -> bool:
+    """GK row 185 (`A1`, `S2`, `S4`) exit + fresh-manifest gate around unmodified `snapshot-link`.
+
+    - `S4`: if `returncode == 0`, returns `False` (`expect_alias_present = False`); the normal path
+      runs and the alias exception never fires.
+    - `A1`: if `returncode != 0`, accepts ONLY `returncode == 1` AND `stderr.strip()` string-equal
+      to `f"{STD_SYM_AUDIT_PREFIX} {PINNED_STD_MERGEFUNC_ALIAS}"`. Any other exit code, message, or
+      extra symbol name fails closed.
+    - `S2`: requires both `built_elf` and `built_json` to exist from THIS run (`st_mtime_ns >= run_started_ns`
+      after emptying `out_dir`), `link.json` `schema == "snapshot-link/1"`, `elf.sha256` equal to the
+      produced ELF SHA-256, and `check.errors == []` (`0` embedding errors). Nothing parses the
+      skipped `println!` summary line (`link.rs:2977`).
+    """
+    expect_alias_present = False
+    if returncode != 0:
+        exp_stderr = f"{STD_SYM_AUDIT_PREFIX} {PINNED_STD_MERGEFUNC_ALIAS}"
+        if returncode == 1 and stderr.strip() == exp_stderr:
+            expect_alias_present = True
+        else:
+            if stdout:
+                sys.stdout.write(stdout)
+            if stderr:
+                sys.stderr.write(stderr)
+            raise subprocess.CalledProcessError(returncode, cmd, stdout, stderr)
+
+    if not built_elf.is_file() or not built_json.is_file():
+        raise RuntimeError(
+            f"snapshot-link did not produce both {built_elf.name} and link.json in {built_json.parent}"
+        )
+    elf_stat = built_elf.stat()
+    json_stat = built_json.stat()
+    if elf_stat.st_mtime_ns < run_started_ns or json_stat.st_mtime_ns < run_started_ns:
+        raise RuntimeError(
+            f"stale output detected in {built_json.parent}: "
+            f"elf_mtime_ns={elf_stat.st_mtime_ns}, json_mtime_ns={json_stat.st_mtime_ns}, "
+            f"run_started_ns={run_started_ns}"
+        )
+
+    link_meta = json.loads(built_json.read_text(encoding="utf-8"))
+    if link_meta.get("schema") != "snapshot-link/1":
+        raise RuntimeError(
+            f"link.json: expected schema='snapshot-link/1', got {link_meta.get('schema')!r}"
+        )
+    produced_sha = hashlib.sha256(built_elf.read_bytes()).hexdigest()
+    if link_meta.get("elf", {}).get("sha256") != produced_sha:
+        raise RuntimeError(
+            f"link.json elf.sha256={link_meta.get('elf', {}).get('sha256')!r} "
+            f"!= produced ELF sha256={produced_sha}"
+        )
+    chk_errors = link_meta.get("check", {}).get("errors")
+    if chk_errors != []:
+        raise RuntimeError(f"link.json check.errors non-empty: {chk_errors!r}")
+
+    if stdout:
+        sys.stdout.write(stdout)
+        if not stdout.endswith("\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+    if expect_alias_present:
+        print(f"cli-elf: snapshot-link rc=1 accepted under GK row 185 A1 ({stderr.strip()})")
+
+    return expect_alias_present
+
+
+def verify_std_symtab_and_block621_alias(
+    elf_bytes: bytes,
+    elf_code: bytes,
+    code_bin: bytes,
+    base: int,
+    all_stubs: list[dict[str, Any]],
+    repo_root: pathlib.Path | None,
+    expect_alias_present: bool,
+    unpinned: bool = False,
+) -> bool:
+    """GK row 185 (`A2–A4`, `A6`, `S1`, `S3`, `S4`) `.symtab` audit + Block-621 alias proof.
+
+    `snapshot-link/src/verify.rs::check_std_elf` checks all static-ELF invariants at l.699-842
+    with early return (`?`), then runs the `.symtab` `FORBIDDEN_SYMS` scan at l.845-859 right
+    before `Ok(())` at l.860 (`link.rs:2976`). This function:
+    - `S3`: asserts there is NO `.dynsym` (`SHT_DYNSYM`) section and enumerates every raw entry of
+      `.symtab` across all types and bindings (including `STT_SECTION` / `STT_FILE`, resolving
+      nameless `STT_SECTION` entries against `.shstrtab` just like Rust `object::ElfSymbol::name()`).
+    - `A2` + `A4` + `S4`: counts raw `.symtab` ENTRIES (not deduplicated names) matching
+      `FORBIDDEN_STD_SYMS`. When `expect_alias_present=False` (`S4`, engine exited `0`), requires
+      `0` matching entries and returns `False` so the exception never fires. When
+      `expect_alias_present=True`, requires `len(forbidden_entries) == 1` with exact name
+      `PINNED_STD_MERGEFUNC_ALIAS` (no wildcards).
+    - `S1`: requires `PINNED_STD_MERGEFUNC_PRIMARY` (`<RawVec<Vec<u8>>>::grow_one`, non-forbidden)
+      to appear as a unique `STT_FUNC` entry in `.symtab`, and requires the 1 flagged entry to be a
+      true alias (`STT_FUNC` with identical `(st_shndx, st_value, st_size)` = `(shndx, 0x48837c, 104)`),
+      not a thunk.
+    - `A3`: verifies that those `104` bytes equal `code.bin[0x8837c:0x883e4]` AND equal Block `621`
+      (`libsignalSessionPlacedCode621`, inside `libsignalSessionPlacedBlocks` covered by
+      `CliElfCodeMatchesPlaced`) word-for-word (`26/26` words) after its two `call26` relocations.
+    """
+    if any(pat in PINNED_STD_MERGEFUNC_PRIMARY for pat in FORBIDDEN_STD_SYMS):
+        raise RuntimeError("internal invariant failed: PINNED_STD_MERGEFUNC_PRIMARY matches FORBIDDEN_STD_SYMS")
+
+    file_len = len(elf_bytes)
+    if file_len < 64 or elf_bytes[:4] != b"\x7fELF":
+        raise RuntimeError("std symtab audit failed: invalid ELF64 header")
+    _e_entry, _e_phoff, e_shoff = struct.unpack_from("<QQQ", elf_bytes, 24)
+    _e_phentsize, _e_phnum, e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHHHH", elf_bytes, 54)
+    if (
+        e_shoff == 0
+        or e_shnum == 0
+        or e_shentsize < 64
+        or e_shstrndx >= e_shnum
+        or e_shoff + e_shnum * e_shentsize > file_len
+    ):
+        raise RuntimeError("std symtab audit failed: missing or invalid section header table")
+
+    shdrs = [
+        struct.unpack_from("<IIQQQQIIQQ", elf_bytes, e_shoff + sidx * e_shentsize)
+        for sidx in range(e_shnum)
+    ]
+    shstr_off, shstr_size = shdrs[e_shstrndx][4], shdrs[e_shstrndx][5]
+    if shstr_off + shstr_size > file_len:
+        raise RuntimeError("std symtab audit failed: malformed .shstrtab section")
+    shstrtab = elf_bytes[shstr_off : shstr_off + shstr_size]
+
+    def read_nul_str(buf: bytes, off: int, label: str) -> str:
+        if off >= len(buf):
+            raise RuntimeError(f"std symtab audit failed: {label} offset {off} out of bounds ({len(buf)})")
+        nul = buf.find(b"\x00", off)
+        if nul == -1:
+            raise RuntimeError(f"std symtab audit failed: unterminated string in {label} at {off}")
+        return buf[off:nul].decode("utf-8", errors="replace")
+
+    symtab_indices: list[int] = []
+    for sidx, shdr in enumerate(shdrs):
+        sh_name_off, sh_type = shdr[0], shdr[1]
+        sec_name = read_nul_str(shstrtab, sh_name_off, ".shstrtab") if shstr_size > 0 else ""
+        if sh_type == 11 or sec_name == ".dynsym":  # SHT_DYNSYM
+            raise RuntimeError("std symtab audit failed: .dynsym (SHT_DYNSYM) section is forbidden")
+        if sh_type == 2 or sec_name == ".symtab":  # SHT_SYMTAB
+            if sh_type != 2:
+                raise RuntimeError(f"std symtab audit failed: .symtab has unexpected sh_type={sh_type}")
+            symtab_indices.append(sidx)
+
+    if len(symtab_indices) != 1:
+        raise RuntimeError(f"std symtab audit failed: expected exactly 1 .symtab section, found {len(symtab_indices)}")
+
+    sym_shdr = shdrs[symtab_indices[0]]
+    sh_offset, sh_size, sh_link, sh_entsize = sym_shdr[4], sym_shdr[5], sym_shdr[6], sym_shdr[9]
+    if (
+        sh_entsize < 24
+        or sh_size == 0
+        or (sh_size % sh_entsize) != 0
+        or sh_offset + sh_size > file_len
+        or sh_link >= len(shdrs)
+    ):
+        raise RuntimeError("std symtab audit failed: malformed .symtab section")
+    str_off, str_size = shdrs[sh_link][4], shdrs[sh_link][5]
+    if str_off + str_size > file_len:
+        raise RuntimeError("std symtab audit failed: malformed .strtab section")
+    strtab = elf_bytes[str_off : str_off + str_size]
+
+    # Raw entry lists (never deduplicated sets): (sym_idx, name, stt, stb, st_shndx, st_value, st_size).
+    forbidden_entries: list[tuple[int, str, int, int, int, int, int]] = []
+    alias_entries: list[tuple[int, int, int, int, int, int]] = []
+    primary_entries: list[tuple[int, int, int, int, int, int]] = []
+    finish_grow_entries: list[tuple[int, int, int, int, int, int]] = []
+
+    for sym_idx, pos in enumerate(range(sh_offset, sh_offset + sh_size, sh_entsize)):
+        st_name, st_info, _st_other, st_shndx, st_value, st_size = struct.unpack_from(
+            "<IBBHQQ", elf_bytes, pos
+        )
+        stt = st_info & 0xF
+        stb = st_info >> 4
+        if stt == 3 and st_name == 0 and 0 < st_shndx < len(shdrs):  # STT_SECTION
+            nm = read_nul_str(shstrtab, shdrs[st_shndx][0], ".shstrtab")
+        else:
+            nm = read_nul_str(strtab, st_name, ".strtab")
+        if any(pat in nm for pat in FORBIDDEN_STD_SYMS):
+            forbidden_entries.append((sym_idx, nm, stt, stb, st_shndx, st_value, st_size))
+        if nm == PINNED_STD_MERGEFUNC_ALIAS:
+            alias_entries.append((sym_idx, stt, stb, st_shndx, st_value, st_size))
+        elif nm == PINNED_STD_MERGEFUNC_PRIMARY:
+            primary_entries.append((sym_idx, stt, stb, st_shndx, st_value, st_size))
+        elif nm == PINNED_STD_FINISH_GROW:
+            finish_grow_entries.append((sym_idx, stt, stb, st_shndx, st_value, st_size))
+
+    if not expect_alias_present:
+        if forbidden_entries:
+            raise RuntimeError(
+                "std symtab audit failed (S4: engine exited 0, alias exception must not fire — "
+                "engine fix B landed? delete this branch per A7): "
+                f"found {len(forbidden_entries)} forbidden .symtab entries: "
+                f"{[(idx, nm, hex(val)) for idx, nm, _t, _b, _s, val, _sz in forbidden_entries]}"
+            )
+        return False
+
+    if len(forbidden_entries) != 1 or forbidden_entries[0][1] != PINNED_STD_MERGEFUNC_ALIAS:
+        raise RuntimeError(
+            f"std symtab audit failed (A2/A4): expected exactly 1 forbidden .symtab entry equal to "
+            f"{PINNED_STD_MERGEFUNC_ALIAS!r}, found {len(forbidden_entries)}: "
+            f"{[(idx, nm, hex(val), sz) for idx, nm, _t, _b, _s, val, sz in forbidden_entries]}"
+        )
+
+    if len(alias_entries) != 1 or len(primary_entries) != 1:
+        raise RuntimeError(
+            f"Block-621 alias proof failed (S1): expected 1 .symtab entry each for alias/primary, "
+            f"got alias={alias_entries}, primary={primary_entries}"
+        )
+    _a_idx, a_stt, _a_stb, a_shndx, a_val, a_sz = alias_entries[0]
+    _p_idx, p_stt, _p_stb, p_shndx, p_val, p_sz = primary_entries[0]
+    if unpinned:
+        if len(finish_grow_entries) != 1:
+            raise RuntimeError(
+                f"Block-621 alias proof failed (S1, unpinned): expected 1 .symtab entry for finish_grow, "
+                f"got {finish_grow_entries}"
+            )
+        _fg_idx, fg_stt, _fg_stb, fg_shndx, fg_val, _fg_sz = finish_grow_entries[0]
+        blk_off = p_val - base
+        exp_va = p_val
+        callee_fg_va = fg_val
+        if (
+            a_stt != 2
+            or p_stt != 2
+            or fg_stt != 2
+            or not (0 < a_shndx < 0xFF00)
+            or (a_shndx, a_val, a_sz) != (p_shndx, p_val, p_sz)
+            or fg_shndx != p_shndx
+            or a_sz != PINNED_BLOCK621_SIZE
+            or blk_off < 0
+            or (blk_off % 4) != 0
+            or blk_off + PINNED_BLOCK621_SIZE > len(elf_code)
+        ):
+            raise RuntimeError(
+                f"Block-621 alias proof failed (A2/S1, unpinned): alias={(a_stt, a_shndx, hex(a_val), a_sz)} vs "
+                f"primary={(p_stt, p_shndx, hex(p_val), p_sz)} vs finish_grow={(fg_stt, fg_shndx, hex(fg_val))}"
+            )
+    else:
+        blk_off = PINNED_BLOCK621_IMG_OFF
+        exp_va = base + PINNED_BLOCK621_IMG_OFF
+        callee_fg_va = base + PINNED_BLOCK622_IMG_OFF
+        if (
+            a_stt != 2
+            or p_stt != 2
+            or not (0 < a_shndx < 0xFF00)
+            or (a_shndx, a_val, a_sz) != (p_shndx, p_val, p_sz)
+            or a_val != exp_va
+            or a_sz != PINNED_BLOCK621_SIZE
+            or PINNED_BLOCK621_IMG_OFF + PINNED_BLOCK621_SIZE > len(elf_code)
+        ):
+            raise RuntimeError(
+                f"Block-621 alias proof failed (A2/S1): alias={(a_stt, a_shndx, hex(a_val), a_sz)} vs "
+                f"primary={(p_stt, p_shndx, hex(p_val), p_sz)} "
+                f"(expected STT_FUNC alias at {exp_va:#x}, {PINNED_BLOCK621_SIZE} B)"
+            )
+
+    elf_blk621 = elf_code[blk_off : blk_off + PINNED_BLOCK621_SIZE]
+    code_blk621 = code_bin[blk_off : blk_off + PINNED_BLOCK621_SIZE]
+    if elf_blk621 != code_blk621:
+        raise RuntimeError("Block-621 alias proof failed (A3): ELF .img.text slice != code.bin slice")
+
+    if repo_root is None:
+        raise RuntimeError("Block-621 alias proof failed (A3): repo_root required to verify LibsignalSessionPlacedObj")
+    placed_lean = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionPlacedObj.lean"
+    placed_bin = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionPlacedObj.bin"
+    if not (placed_lean.is_file() and placed_bin.is_file()):
+        raise RuntimeError("Block-621 alias proof failed (A3): missing LibsignalSessionPlacedObj.{lean,bin}")
+
+    placed_lean_txt = placed_lean.read_text(encoding="utf-8")
+    if unpinned:
+        dyn_re = re.compile(
+            rf'/--\s*The code bytes of block `\d+` \(`std:\.text\.unlikely\.{re.escape(PINNED_STD_MERGEFUNC_PRIMARY)}`\)\.\s*-/\s*'
+            r'def\s+(libsignalSessionPlacedCode\d+)\s*:\s*List\s*\(BitVec\s+8\)\s*:=\s*'
+            r'include_bytes%\s+"LibsignalSessionPlacedObj\.bin"\s+(\d+)\s+(\d+)'
+        )
+        m_dyn = dyn_re.search(placed_lean_txt)
+        if m_dyn is None:
+            raise RuntimeError(
+                "Block-621 alias proof failed (A3, unpinned): grow_one PlacedCode slice not found in LibsignalSessionPlacedObj.lean"
+            )
+        placed_ident = m_dyn.group(1)
+        bin_off, bin_len = int(m_dyn.group(2)), int(m_dyn.group(3))
+    else:
+        m = PLACED_CODE621_RE.search(placed_lean_txt)
+        if m is None:
+            raise RuntimeError("Block-621 alias proof failed (A3): libsignalSessionPlacedCode621 slice not found")
+        placed_ident = "libsignalSessionPlacedCode621"
+        bin_off, bin_len = int(m.group(1)), int(m.group(2))
+    blocks_hdr = "def libsignalSessionBlocks : List Obj.CodeBlock := ["
+    if blocks_hdr not in placed_lean_txt:
+        raise RuntimeError(
+            "Block-621 alias proof failed (A3/N3): missing `def libsignalSessionBlocks` in LibsignalSessionPlacedObj.lean"
+        )
+    after_blocks = placed_lean_txt.split(blocks_hdr, 1)[1]
+    if "\n]\n" not in after_blocks:
+        raise RuntimeError(
+            "Block-621 alias proof failed (A3/N3): unterminated `def libsignalSessionBlocks` list"
+        )
+    blocks_body = after_blocks.split("\n]\n", 1)[0]
+    if f"{{ code := {placed_ident}\n" not in blocks_body:
+        raise RuntimeError(
+            f"Block-621 alias proof failed (A3/N3): {placed_ident} not registered inside "
+            "libsignalSessionBlocks list body (CliElfCodeMatchesPlaced)"
+        )
+    if bin_len != PINNED_BLOCK621_SIZE:
+        raise RuntimeError(f"Block-621 alias proof failed (A3): {placed_ident} length {bin_len} != {PINNED_BLOCK621_SIZE}")
+    raw_placed = bytearray(placed_bin.read_bytes()[bin_off : bin_off + bin_len])
+    if len(raw_placed) != PINNED_BLOCK621_SIZE:
+        raise RuntimeError("Block-621 alias proof failed (A3): truncated LibsignalSessionPlacedObj.bin")
+
+    he_stubs = [int(st["off"]) for st in all_stubs if st.get("extern") == PINNED_HANDLE_ERROR_SYM]
+    if len(he_stubs) != 1:
+        raise RuntimeError(f"Block-621 alias proof failed (A3): expected 1 handle_error stub, got {he_stubs}")
+
+    def encode_bl(pc_va: int, tgt_va: int) -> int:
+        delta = tgt_va - pc_va
+        if (delta % 4) != 0 or not (-(1 << 27) <= delta < (1 << 27)):
+            raise RuntimeError(f"Block-621 call26 delta out of range: {pc_va:#x} -> {tgt_va:#x}")
+        return 0x94000000 | ((delta // 4) & 0x03FFFFFF)
+
+    for rel_off, tgt_va in (
+        (56, callee_fg_va),
+        (100, base + he_stubs[0]),
+    ):
+        orig_w, = struct.unpack_from("<I", raw_placed, rel_off)
+        if (orig_w & 0xFC000000) != 0x94000000:
+            raise RuntimeError(f"Block-621 template word at +{rel_off} is not BL: {orig_w:#010x}")
+        struct.pack_into("<I", raw_placed, rel_off, encode_bl(exp_va + rel_off, tgt_va))
+
+    if bytes(raw_placed) != elf_blk621:
+        raise RuntimeError("Block-621 alias proof failed (A3): relocated PlacedCode621 != ELF 0x48837c..0x4883e4")
+
+    return True
+
+
+def _sign_extend(val: int, bits: int) -> int:
+    if val & (1 << (bits - 1)):
+        return val - (1 << bits)
+    return val
+
+
+def decode_pc_rel_target(word: int, pc: int) -> int | None:
+    """Decode PC-relative target of AArch64 `B`, `BL`, `B.cond`, `CBZ/CBNZ`, `TBZ/TBNZ`, or `ADR`."""
+    op6 = word & 0xFC000000
+    if op6 in (0x14000000, 0x94000000):  # B / BL imm26
+        return pc + _sign_extend(word & 0x03FFFFFF, 26) * 4
+    if (word & 0xFF000010) == 0x54000000:  # B.cond imm19
+        return pc + _sign_extend((word >> 5) & 0x7FFFF, 19) * 4
+    if (word & 0x7E000000) == 0x34000000:  # CBZ / CBNZ imm19
+        return pc + _sign_extend((word >> 5) & 0x7FFFF, 19) * 4
+    if (word & 0x7E000000) == 0x36000000:  # TBZ / TBNZ imm14
+        return pc + _sign_extend((word >> 5) & 0x3FFF, 14) * 4
+    if (word & 0x9F000000) == 0x10000000:  # ADR (not ADRP)
+        immlo = (word >> 29) & 0x3
+        immhi = (word >> 5) & 0x7FFFF
+        imm21 = _sign_extend((immhi << 2) | immlo, 21)
+        return pc + imm21
+    return None
+
+
+def load_code_symbols_from_obj_lean(obj_lean_path: pathlib.Path | None, code_len: int) -> list[tuple[int, int, str]]:
+    """Parse `(start_off, end_off, sym_name)` function intervals inside `[0, code_len)` if available."""
+    if obj_lean_path is None or not obj_lean_path.is_file():
+        return []
+    txt = obj_lean_path.read_text(encoding="utf-8")
+    if "symbols :=" not in txt:
+        return []
+    after_syms = txt.split("symbols :=", 1)[1]
+    pts: dict[int, str] = {}
+    for line in after_syms.splitlines():
+        m = OBJ_SYM_PAIR_RE.search(line)
+        if m is not None:
+            name = m.group(1)
+            off = int(m.group(2))
+            if 0 <= off < code_len:
+                pts.setdefault(off, name)
+            after_pair = line[m.end() :].strip()
+            if after_pair.startswith("]"):
+                break
+        elif pts and "]" in line:
+            break
+    if not pts:
+        return []
+    sorted_offs = sorted(pts.keys())
+    intervals: list[tuple[int, int, str]] = []
+    for i, start in enumerate(sorted_offs):
+        end = sorted_offs[i + 1] if i + 1 < len(sorted_offs) else code_len
+        intervals.append((start, end, pts[start]))
+    return intervals
+
+
+KNOWN_DEAD_MEMCMP_CALLERS: dict[tuple[int, str], str] = {
+    (
+        0x40D110,
+        "<libsignal_protocol::fingerprint::Fingerprint>::display_string",
+    ): "unused libsignal-protocol Fingerprint API in staticlib; 0 direct callers, 0 address-taken refs",
+    (
+        0x423870,
+        "<libsignal_protocol::fingerprint::DisplayableFingerprint as core::fmt::Display>::fmt",
+    ): "unused Display impl for DisplayableFingerprint in staticlib; 0 direct callers, 0 address-taken refs",
+}
+
+
+def collect_adrp_add_code_targets(
+    segs: list[tuple[int, int, int, int, int]],
+    elf_bytes: bytes,
+    base: int,
+    code_len: int,
+) -> list[tuple[int, int]]:
+    refs: list[tuple[int, int]] = []
+    for p_offset, p_vaddr, p_filesz, _p_memsz, p_flags in segs:
+        if (p_flags & 0x1) == 0:
+            continue
+        seg_data = elf_bytes[p_offset : p_offset + (p_filesz & ~3)]
+        adrp_page_by_reg: dict[int, tuple[int, int]] = {}
+        for rel in range(0, len(seg_data), 4):
+            pc = p_vaddr + rel
+            word, = struct.unpack_from("<I", seg_data, rel)
+            if (word & 0x9F000000) == 0x90000000:  # ADRP Xd, imm
+                rd = word & 0x1F
+                immlo = (word >> 29) & 0x3
+                immhi = (word >> 5) & 0x7FFFF
+                imm21 = _sign_extend((immhi << 2) | immlo, 21)
+                page = (pc & ~0xFFF) + (imm21 << 12)
+                if rd != 31:
+                    adrp_page_by_reg[rd] = (pc, page)
+                continue
+            if (word & 0xFFC00000) == 0x91000000:
+                rd = word & 0x1F
+                rn = (word >> 5) & 0x1F
+                imm12 = (word >> 10) & 0xFFF
+                if rn in adrp_page_by_reg:
+                    adrp_pc, page = adrp_page_by_reg[rn]
+                    if 0 < pc - adrp_pc <= 32:
+                        cand = page + imm12
+                        if base <= cand < base + code_len:
+                            refs.append((pc, cand))
+                if rd != rn:
+                    adrp_page_by_reg.pop(rd, None)
+                continue
+            if (word & 0xFE000000) == 0xD6000000:
+                adrp_page_by_reg.clear()
+    return refs
+
+
+def verify_no_reachable_memcmp_stub_refs(
+    elf_bytes: bytes,
+    e_entry: int,
+    segs: list[tuple[int, int, int, int, int]],
+    base: int,
+    code_len: int,
+    all_stubs: list[dict[str, Any]],
+    obj_lean_path: pathlib.Path | None = None,
+    allowed_dead_callers: dict[tuple[int, str], str] | None = None,
+) -> tuple[int, int]:
+    memcmp_stubs = [st for st in all_stubs if st.get("extern") == "memcmp"]
+    if not memcmp_stubs:
+        return (0, 0)
+
+    allow_table = KNOWN_DEAD_MEMCMP_CALLERS if allowed_dead_callers is None else allowed_dead_callers
+
+    stored_ptrs: set[int] = set()
+    for p_offset, p_vaddr, p_filesz, _p_memsz, _p_flags in segs:
+        if p_vaddr < base or p_filesz < 8:
+            continue
+        seg_data = elf_bytes[p_offset : p_offset + (p_filesz & ~7)]
+        for (qval,) in struct.iter_unpack("<Q", seg_data):
+            if base <= qval < base + code_len:
+                stored_ptrs.add(qval)
+
+    adrp_add_refs = collect_adrp_add_code_targets(segs, elf_bytes, base, code_len)
+    intervals = load_code_symbols_from_obj_lean(obj_lean_path, code_len)
+    interval_starts = [iv[0] for iv in intervals]
+
+    def find_interval_idx(off: int) -> int | None:
+        if not intervals:
+            return None
+        idx = bisect.bisect_right(interval_starts, off) - 1
+        if 0 <= idx < len(intervals) and intervals[idx][0] <= off < intervals[idx][1]:
+            return idx
+        return None
+
+    dead_refs = 0
+    for st in memcmp_stubs:
+        memcmp_off = int(st["off"])
+        memcmp_va = base + memcmp_off
+
+        if memcmp_va in stored_ptrs or any(tgt == memcmp_va for _pc, tgt in adrp_add_refs):
+            raise RuntimeError(
+                f"unhooked memcmp stub at {memcmp_va:#x} has its address taken in PT_LOAD data/GOT or ADRP+ADD"
+            )
+
+        external_into_img: dict[int, list[int]] = {}
+        for p_offset, p_vaddr, p_filesz, _p_memsz, p_flags in segs:
+            if (p_flags & 0x1) == 0:
+                continue
+            seg_data = elf_bytes[p_offset : p_offset + (p_filesz & ~3)]
+            for rel in range(0, len(seg_data), 4):
+                pc = p_vaddr + rel
+                if base <= pc < base + code_len:
+                    continue
+                word, = struct.unpack_from("<I", seg_data, rel)
+                tgt = decode_pc_rel_target(word, pc)
+                if tgt == memcmp_va:
+                    raise RuntimeError(
+                        f"external executable segment at {pc:#x} branches to unhooked memcmp stub {memcmp_va:#x}"
+                    )
+                if intervals and tgt is not None and base <= tgt < base + code_len:
+                    dst_iv = find_interval_idx(tgt - base)
+                    if dst_iv is not None:
+                        external_into_img.setdefault(dst_iv, []).append(pc)
+
+        img_text = None
+        for p_offset, p_vaddr, p_filesz, _p_memsz, _p_flags in segs:
+            if p_vaddr <= base and base + code_len <= p_vaddr + p_filesz:
+                start = p_offset + (base - p_vaddr)
+                img_text = elf_bytes[start : start + code_len]
+                break
+        if img_text is None:
+            raise RuntimeError("missing .img.text while checking memcmp references")
+
+        direct_hit_offs: list[int] = []
+        incoming_callers: dict[int, set[int]] = {}
+        for off in range(0, len(img_text) & ~3, 4):
+            word, = struct.unpack_from("<I", img_text, off)
+            tgt_va = decode_pc_rel_target(word, base + off)
+            if tgt_va is None:
+                continue
+            if tgt_va == memcmp_va:
+                direct_hit_offs.append(off)
+            if intervals and base <= tgt_va < base + code_len:
+                src_iv = find_interval_idx(off)
+                dst_iv = find_interval_idx(tgt_va - base)
+                if src_iv is not None and dst_iv is not None and src_iv != dst_iv:
+                    incoming_callers.setdefault(dst_iv, set()).add(src_iv)
+
+        for hit_off in direct_hit_offs:
+            iv_idx = find_interval_idx(hit_off)
+            if iv_idx is None:
+                raise RuntimeError(
+                    f".img.text+{hit_off:#x} ({base + hit_off:#x}) branches to unhooked memcmp stub {memcmp_va:#x} "
+                    "(no dead-function isolation table available)"
+                )
+            fn_start, fn_end, fn_name = intervals[iv_idx]
+            fn_start_va = base + fn_start
+            fn_end_va = base + fn_end
+            has_stored_ptr = any((base + a) in stored_ptrs for a in range(fn_start, fn_end, 4))
+            has_adrp_ref = any(
+                fn_start_va <= tgt < fn_end_va and not (fn_start_va <= src_pc < fn_end_va)
+                for src_pc, tgt in adrp_add_refs
+            )
+            ext_callers = external_into_img.get(iv_idx, [])
+            is_root = (
+                fn_name == "main"
+                or (fn_start_va <= e_entry < fn_end_va)
+                or has_stored_ptr
+                or has_adrp_ref
+                or bool(ext_callers)
+            )
+            callers = incoming_callers.get(iv_idx, set())
+            if is_root or callers:
+                raise RuntimeError(
+                    f"reachable function {fn_name!r} at {fn_start_va:#x} (.img.text+{hit_off:#x}) branches to "
+                    f"unhooked memcmp stub {memcmp_va:#x} (is_root={is_root}, "
+                    f"incoming_fn_callers={len(callers)}, ext_callers={len(ext_callers)}, "
+                    f"stored_ptr={has_stored_ptr}, adrp_ref={has_adrp_ref})"
+                )
+            if (fn_start_va, fn_name) not in allow_table:
+                raise RuntimeError(
+                    f"unlisted function {fn_name!r} at {fn_start_va:#x} (.img.text+{hit_off:#x}) branches to "
+                    f"unhooked memcmp stub {memcmp_va:#x} (not in explicit KNOWN_DEAD_MEMCMP_CALLERS allowlist)"
+                )
+            dead_refs += 1
+
+    return (0, dead_refs)
+
+
+def parse_elf64_symtab(elf_bytes: bytes) -> dict[str, list[tuple[int, int, int, int]]]:
+    """Return `name -> [(st_value, st_size, st_info, st_shndx), ...]` from `.symtab`."""
+    e_shoff, = struct.unpack_from("<Q", elf_bytes, 40)
+    e_shentsize, e_shnum = struct.unpack_from("<HH", elf_bytes, 58)
+    if e_shoff == 0 or e_shnum == 0:
+        return {}
+    shdrs: list[tuple[int, int, int, int, int]] = []
+    for i in range(e_shnum):
+        off = e_shoff + i * e_shentsize
+        _sh_name, sh_type, _flags, _addr, sh_offset, sh_size, sh_link, _info, _align, sh_entsize = struct.unpack_from(
+            "<IIQQQQIIQQ", elf_bytes, off
+        )
+        shdrs.append((sh_type, sh_offset, sh_size, sh_link, sh_entsize))
+    out: dict[str, list[tuple[int, int, int, int]]] = {}
+    for sh_type, sh_offset, sh_size, sh_link, sh_entsize in shdrs:
+        if sh_type != 2 or sh_entsize < 24 or sh_link >= len(shdrs):  # SHT_SYMTAB
+            continue
+        _str_type, str_off, str_size, _, _ = shdrs[sh_link]
+        strtab = elf_bytes[str_off : str_off + str_size]
+        for pos in range(sh_offset, sh_offset + sh_size, sh_entsize):
+            st_name, st_info, _st_other, st_shndx, st_value, st_size = struct.unpack_from(
+                "<IBBHQQ", elf_bytes, pos
+            )
+            if st_name >= len(strtab):
+                continue
+            nul = strtab.find(b"\x00", st_name)
+            raw_name = strtab[st_name:nul] if nul != -1 else strtab[st_name:]
+            name = raw_name.decode("utf-8", errors="replace")
+            if name:
+                out.setdefault(name, []).append((st_value, st_size, st_info, st_shndx))
+    return out
+
+
+def _extract_bracketed_body(text: str, open_bracket_idx: int) -> tuple[str, int]:
+    """Given `open_bracket_idx` at `[`, return `(inner_body, idx_after_matching_close_bracket)`."""
+    depth = 1
+    in_str = False
+    i = open_bracket_idx + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return text[open_bracket_idx + 1 : i], i + 1
+        i += 1
+    raise ValueError("unterminated `[` in Lean file")
+
+
+def parse_io_placed_lean(lean_path: pathlib.Path) -> dict[str, Any]:
+    """Parse `SignalSessionIoPlacedObj.lean` dynamically (`0` hand-written extern lists, GK row 178(a))."""
+    text = lean_path.read_text(encoding="utf-8")
+    slices: dict[str, tuple[int, int]] = {}
+    for m in IO_SLICE_RE.finditer(text):
+        slices[m.group(1)] = (int(m.group(2)), int(m.group(3)))
+    if not slices:
+        raise RuntimeError(f"{lean_path}: found 0 `include_bytes% \"SignalSessionIoPlacedObj.bin\"` slices")
+
+    slice_doc_syms: dict[str, str] = {}
+    for m in IO_SLICE_DOC_RE.finditer(text):
+        slice_doc_syms[m.group(2)] = m.group(1)
+
+    blk_anchor = "def signalSessionIoBlocks : List Obj.CodeBlock := ["
+    pos = text.find(blk_anchor)
+    if pos == -1:
+        raise RuntimeError(f"{lean_path}: missing `{blk_anchor}`")
+    blocks_body, after_blocks = _extract_bracketed_body(text, pos + len(blk_anchor) - 1)
+    tail = text[after_blocks:]
+
+    blocks: list[dict[str, Any]] = []
+    for raw_blk in blocks_body.split("{ code := ")[1:]:
+        code_ident = raw_blk.splitlines()[0].strip().rstrip(",")
+        if code_ident not in slices:
+            raise RuntimeError(f"{lean_path}: unknown code slice `{code_ident}` in block")
+        ext_pos = raw_blk.find("externs := [")
+        if ext_pos == -1:
+            raise RuntimeError(f"{lean_path}: block `{code_ident}` missing `externs := [`")
+        pre_ext = raw_blk[:ext_pos]
+        ext_body, _ = _extract_bracketed_body(raw_blk, ext_pos + len("externs := [") - 1)
+        rel_pos = pre_ext.find("relocs := [")
+        sym_part = pre_ext[:rel_pos] if rel_pos != -1 else pre_ext
+        rel_part = (
+            _extract_bracketed_body(pre_ext, rel_pos + len("relocs := [") - 1)[0]
+            if rel_pos != -1
+            else ""
+        )
+        syms = [(m.group(1), int(m.group(2), 0)) for m in IO_SYM_RE.finditer(sym_part)]
+        relocs = [
+            {
+                "off": int(m.group(1)),
+                "kind": m.group(2),
+                "sym": m.group(3),
+                "addend": int(m.group(4)) if m.group(4) is not None else 0,
+            }
+            for m in IO_RELOC_RE.finditer(rel_part)
+        ]
+        exts = re.findall(r'"((?:[^"\\]|\\.)*)"', ext_body)
+        blocks.append(
+            {
+                "code_ident": code_ident,
+                "bin_off": slices[code_ident][0],
+                "bin_len": slices[code_ident][1],
+                "symbols": syms,
+                "relocs": relocs,
+                "externs": exts,
+            }
+        )
+
+    data_anchor = "def signalSessionIoData : List Obj.SymDataInfo := ["
+    data_pos = tail.find(data_anchor)
+    if data_pos != -1:
+        data_body, _ = _extract_bracketed_body(tail, data_pos + len(data_anchor) - 1)
+        if data_body.strip():
+            raise RuntimeError(f"{lean_path}: expected empty `signalSessionIoData`, found `{data_body.strip()}`")
+
+    export_syms: dict[str, str] = {}
+    es_anchor = "exportSyms := ["
+    es_pos = tail.find(es_anchor)
+    if es_pos != -1:
+        es_body, _ = _extract_bracketed_body(tail, es_pos + len(es_anchor) - 1)
+        for m in IO_EXPORT_PAIR_RE.finditer(es_body):
+            export_syms[m.group(1)] = m.group(2)
+
+    local_asm_syms: dict[str, str] = {}
+    for blk in blocks:
+        if blk["symbols"]:
+            primary_dem = blk["symbols"][0][0]
+            doc_sym = slice_doc_syms.get(blk["code_ident"])
+            if primary_dem not in export_syms and doc_sym is not None:
+                local_asm_syms[primary_dem] = doc_sym
+
+    return {"blocks": blocks, "export_syms": export_syms, "local_asm_syms": local_asm_syms}
+
+
+def parse_placed_obj_externs(lean_path: pathlib.Path) -> set[str]:
+    """Extract the union of generated mangled `externs` across all blocks of a `*PlacedObj.lean` file."""
+    text = lean_path.read_text(encoding="utf-8")
+    anchor = "externs := ["
+    idx = 0
+    found = False
+    out: set[str] = set()
+    while True:
+        pos = text.find(anchor, idx)
+        if pos == -1:
+            break
+        found = True
+        ext_body, next_idx = _extract_bracketed_body(text, pos + len(anchor) - 1)
+        out.update(re.findall(r'"((?:[^"\\]|\\.)*)"', ext_body))
+        idx = next_idx
+    if not found:
+        raise RuntimeError(f"{lean_path}: missing `externs := [`")
+    return out
+
+
+REVIEWED_IO_EXTERN_CONTRACTS: frozenset[str] = frozenset(
+    {
+        "<std::io::stdio::Stdout as std::io::Write>::flush",
+        "<core::io::error::CustomOwner as core::ops::drop::Drop>::drop",
+    }
+)
+
+
+def demangle_symbols_no_verbose(symbols: list[str]) -> list[str]:
+    """Demangle Rust v0 / C symbol names without crate disambiguators via `c++filt --no-verbose`."""
+    if not symbols:
+        return []
+    cxxfilt = shutil.which("c++filt")
+    if not cxxfilt:
+        raise RuntimeError("`c++filt` required on PATH to demangle Rust v0 extern symbols (GK row 186 C1-2)")
+    out = subprocess.run(
+        [cxxfilt, "--no-verbose"],
+        input="\n".join(symbols) + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    if len(out) != len(symbols):
+        raise RuntimeError(f"c++filt output line count {len(out)} != input count {len(symbols)}")
+    return out
+
+
+def prelink_lookup_stub_by_mangled_name(
+    placed_lean_path: pathlib.Path,
+    obj_lean_path: pathlib.Path,
+    target_mangled: str,
+) -> tuple[int, str, int]:
+    """SR-48(a): pre-link lookup of `target_mangled` in Image 0's `LinkedImage` stub table
+    with 0 hardcoded `__snapstub_<idx>` literals and 0 post-link circularity."""
+    placed_exts = sorted(parse_placed_obj_externs(placed_lean_path))
+    if target_mangled not in placed_exts:
+        raise RuntimeError(f"SR-48(a): {target_mangled!r} not in {placed_lean_path.name} externs")
+    dem_all = demangle_symbols_no_verbose(placed_exts + [target_mangled])
+    target_dem = dem_all[-1]
+    same_dem = [m_sym for m_sym, d_sym in zip(placed_exts, dem_all[:-1]) if d_sym == target_dem]
+    if same_dem != [target_mangled]:
+        raise RuntimeError(f"SR-48(a): ambiguous mangled externs for {target_dem!r}: {same_dem}")
+    obj_txt = obj_lean_path.read_text(encoding="utf-8")
+    st_anchor = "stubs := ["
+    st_pos = obj_txt.find(st_anchor)
+    if st_pos == -1:
+        raise RuntimeError(f"SR-48(a): {obj_lean_path} missing `stubs := [`")
+    st_sec, _ = _extract_bracketed_body(obj_txt, st_pos + len(st_anchor) - 1)
+    st_entries = [(m.group(1), int(m.group(2), 0)) for m in OBJ_STUB_PAIR_RE.finditer(st_sec)]
+    hits = [(idx, off) for idx, (nm, off) in enumerate(st_entries) if nm == target_dem]
+    if len(hits) != 1:
+        raise RuntimeError(
+            f"SR-48(a): expected 1 stub entry for {target_dem!r} ({target_mangled}) in "
+            f"{obj_lean_path.name}, found {len(hits)}: {hits}"
+        )
+    stub_idx, stub_off = hits[0]
+    if stub_off != st_entries[0][1] + 4 * stub_idx:
+        raise RuntimeError(f"SR-48(a): non-contiguous stub offset at idx={stub_idx}: {stub_off:#x}")
+    return stub_idx, f"__snapstub_{stub_idx}", stub_off
+
+
+def lookup_postlink_stub_by_name(all_stubs: list[dict[str, Any]], target_mangled: str) -> tuple[int, str, int]:
+    """SR-48(a): post-link lookup of `target_mangled` in `link.json['stubs']` (`0` or `>1` = error)."""
+    hits = [(i, int(st["off"])) for i, st in enumerate(all_stubs) if st.get("extern") == target_mangled]
+    if len(hits) != 1:
+        raise RuntimeError(
+            f"SR-48(a): post-link link.json stubs lookup for {target_mangled!r} expected 1 match, got {len(hits)}"
+        )
+    idx, off = hits[0]
+    return idx, f"__snapstub_{idx}", off
+
+
+def _check_handle_error_manifest_relocs(blocks: list[dict[str, Any]]) -> None:
+    he_relocs = [
+        (b_idx, rel["off"], rel["kind"], rel.get("addend", 0))
+        for b_idx, blk in enumerate(blocks)
+        for rel in blk["relocs"]
+        for _ in [None]
+        if rel["sym"] == PINNED_HANDLE_ERROR_SYM
+    ]
+    if len(he_relocs) != PINNED_HANDLE_ERROR_RELOC_COUNT:
+        raise RuntimeError(
+            f"C1-4/SR-48: expected exactly {PINNED_HANDLE_ERROR_RELOC_COUNT} PlacedObj relocations to "
+            f"{PINNED_HANDLE_ERROR_SYM!r}, found {len(he_relocs)}: {he_relocs}"
+        )
+    for b_idx, off, kind, addend in he_relocs:
+        if kind != "call26" or addend != 0:
+            raise RuntimeError(
+                f"C1-4/SR-48: PlacedObj relocation to {PINNED_HANDLE_ERROR_SYM!r} in block {b_idx}+{off:#x} "
+                f"must be call26 with addend 0, got kind={kind!r} addend={addend}"
+            )
+
+
+def _strip_leading_asm_banner(txt: str) -> str:
+    """Strip contiguous top-of-file `// ...` banner lines before the first non-comment line (`.section`)."""
+    lines = txt.splitlines(keepends=True)
+    idx = 0
+    while idx < len(lines) and lines[idx].startswith("//"):
+        idx += 1
+    return "".join(lines[idx:])
+
+
+def render_io_placed_asm(
+    repo_root: pathlib.Path,
+    lock: dict[str, Any] | None = None,
+    pad_4b: bool | None = None,
+) -> str:
+    """SR-48(a,d): deterministically render `signal_session_io.S` from `SignalSessionIoPlacedObj.{lean,bin}`."""
+    lk = lock or {}
+    rel_bin = lk.get("io_placed_bin_path", DEFAULT_REL_IO_PLACED_BIN)
+    rel_lean = lk.get("io_placed_lean_path", DEFAULT_REL_IO_PLACED_LEAN)
+    use_pad = bool(lk.get("io_asm_pad_4b", False)) if pad_4b is None else pad_4b
+
+    io_bin = (repo_root / str(rel_bin)).read_bytes()
+    parsed = parse_io_placed_lean(repo_root / str(rel_lean))
+    blocks = parsed["blocks"]
+    export_syms: dict[str, str] = parsed["export_syms"]
+    local_asm_syms: dict[str, str] = parsed.get("local_asm_syms", {})
+    _check_handle_error_manifest_relocs(blocks)
+
+    branch_set = set(lk.get("branch_stubs", []))
+    main_placed = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionPlacedObj.lean"
+    main_obj = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionObj.lean"
+    he_stub_sym = PINNED_HANDLE_ERROR_SYM
+    if PINNED_HANDLE_ERROR_SYM not in branch_set:
+        _he_idx, he_stub_sym, _he_off = prelink_lookup_stub_by_mangled_name(
+            main_placed, main_obj, PINNED_HANDLE_ERROR_SYM
+        )
+
+    lines = [
+        *IO_ASM_HEADER_LINES,
+        '.section .text.signal_session_io_all,"ax",@progbits',
+        ".p2align 2",
+    ]
+    for b_idx, blk in enumerate(blocks):
+        if b_idx > 0:
+            lines.append("")
+        primary_dem = blk["symbols"][0][0]
+        fn_sym = export_syms.get(primary_dem) or local_asm_syms.get(primary_dem, primary_dem)
+        if primary_dem in export_syms:
+            lines.append(f".globl {fn_sym}")
+        lines.append(f".type {fn_sym}, @function")
+        lines.append(f"{fn_sym}:")
+        raw_slice = io_bin[blk["bin_off"] : blk["bin_off"] + blk["bin_len"]]
+        reloc_by_off = {rel["off"]: rel for rel in blk["relocs"]}
+        for off in range(0, blk["bin_len"], 4):
+            if off in reloc_by_off:
+                rel = reloc_by_off[off]
+                mnem = "bl" if rel["kind"] == "call26" else "b"
+                if rel["sym"] == PINNED_HANDLE_ERROR_SYM and rel["sym"] not in branch_set:
+                    tgt = he_stub_sym
+                else:
+                    tgt = export_syms.get(rel["sym"]) or local_asm_syms.get(rel["sym"], rel["sym"])
+                lines.append(f"  {mnem} {tgt}")
+            else:
+                w, = struct.unpack_from("<I", raw_slice, off)
+                lines.append(f"  .inst 0x{w:08x}")
+        lines.append(f".size {fn_sym}, . - {fn_sym}")
+    if use_pad:
+        # Must remain inside live `.section .text.signal_session_io_all` (a separate unreferenced
+        # `.text.io_pad` section is stripped by `ld.lld --gc-sections`, SR-48(d)).
+        lines.append("  .inst 0x00000000")
+    return "\n".join(lines) + "\n"
+
+
+def collect_proved_block_symbols(repo_root: pathlib.Path, lock: dict[str, Any]) -> set[str]:
+    """Dynamically collect proved export/block symbol names from generated/proved Lean modules + `rdl_shim`."""
+    proved: set[str] = set()
+    scan_files: list[pathlib.Path] = (
+        sorted((repo_root / ".GeneratedLean" / "GeneratedLean").glob("*PlacedObj.lean"))
+        + sorted((repo_root / "arm64-semantics" / "VerifiedLibraries").rglob("Generated/*.lean"))
+        + sorted(
+            (repo_root / "LibsignalBinary" / "Proofs" / "SignalSession" / "Cli").glob("*Relink/TieSpec.lean")
+        )
+        + [
+            repo_root / "arm64-semantics" / "VerifiedLibraries" / "Mallocng" / "Spec" / "PlacedLib.lean",
+            repo_root / "arm64-semantics" / "VerifiedLibraries" / "Musl" / "Proofs" / "SyscallSym.lean",
+        ]
+    )
+    for path in scan_files:
+        if not path.is_file():
+            continue
+        txt = path.read_text(encoding="utf-8")
+        for m in IO_EXPORT_PAIR_RE.finditer(txt):
+            proved.add(m.group(2))
+        for m in IO_SYM_RE.finditer(txt):
+            proved.add(m.group(1))
+    if "rdl_shim_path" in lock:
+        shim_path = repo_root / str(lock["rdl_shim_path"])
+        if shim_path.is_file():
+            for m in re.finditer(
+                r"^\s*\.globl\s+(__rdl_[A-Za-z0-9_]+|_RNvCs[A-Za-z0-9_]+___rust_[A-Za-z0-9_]*)\s*$",
+                shim_path.read_text(encoding="utf-8"),
+                re.M,
+            ):
+                proved.add(m.group(1))
+    return proved
+
+
+def verify_io_placed_manifest_and_blocks(
+    repo_root: pathlib.Path,
+    lock: dict[str, Any],
+    elf_bytes: bytes | None = None,
+    segs: list[tuple[int, int, int, int, int]] | None = None,
+    all_stubs: list[dict[str, Any]] | None = None,
+    base: int | None = None,
+    verify_in_elf: bool = False,
+    io_asm_path: pathlib.Path | None = None,
+    verbose: bool = True,
+) -> tuple[int, int]:
+    """Verify `cli/io` placed artifacts (`SignalSessionIoIndex.json` + `SignalSessionIoPlacedObj.{lean,bin}`)
+    with ZERO hand-written extern lists (GK rows 178, 186 C1-1..C1-4 & 630, SR E2 & SR-48)."""
+    if "io_placed_bin_path" not in lock:
+        raise RuntimeError("inputs.lock missing required key 'io_placed_bin_path' (GK row 186 C1-1)")
+    io_bin_path = verify_sha256_entry(repo_root, lock, "io_placed_bin_path", "io_placed_bin_sha256")
+    io_bin = io_bin_path.read_bytes()
+    exp_bin_size = int(lock["io_placed_bin_size"])
+    if len(io_bin) != exp_bin_size:
+        raise RuntimeError(f"{io_bin_path} size {len(io_bin)} != inputs.lock io_placed_bin_size={exp_bin_size}")
+
+    io_lean_path = repo_root / str(lock["io_placed_lean_path"])
+    io_idx_path = repo_root / str(lock["io_index_path"])
+    if not io_lean_path.is_file():
+        raise RuntimeError(f"missing generated cli/io PlacedObj module: {io_lean_path}")
+    if not io_idx_path.is_file():
+        raise RuntimeError(f"missing generated cli/io Index.json: {io_idx_path}")
+
+    parsed = parse_io_placed_lean(io_lean_path)
+    blocks = parsed["blocks"]
+    export_syms: dict[str, str] = parsed["export_syms"]
+    idx_json = json.loads(io_idx_path.read_text(encoding="utf-8"))
+    idx_fns = {str(fn["name"]): int(fn["size_bytes"]) for fn in idx_json.get("functions", [])}
+    idx_stubs = [str(st["name"]) for st in idx_json.get("stubs", [])]
+
+    if len(blocks) != len(idx_fns):
+        raise RuntimeError(
+            f"cli/io block count mismatch: PlacedObj has {len(blocks)} blocks vs Index.json {len(idx_fns)} functions"
+        )
+
+    cursor = 0
+    internal_syms: dict[str, tuple[int, int]] = {}
+    io_externs_list: list[str] | None = None
+    for b_idx, blk in enumerate(blocks):
+        if blk["bin_off"] != cursor:
+            raise RuntimeError(
+                f"cli/io block {b_idx} bin_off={blk['bin_off']} != contiguous cursor {cursor}"
+            )
+        if blk["bin_len"] <= 0 or (blk["bin_len"] % 4) != 0:
+            raise RuntimeError(f"cli/io block {b_idx} invalid bin_len={blk['bin_len']}")
+        cursor += blk["bin_len"]
+        if not blk["symbols"]:
+            raise RuntimeError(f"cli/io block {b_idx} has 0 symbols")
+        for sym_name, sym_off in blk["symbols"]:
+            if sym_name in internal_syms:
+                raise RuntimeError(f"duplicate internal cli/io symbol {sym_name!r}")
+            internal_syms[sym_name] = (b_idx, sym_off)
+            if sym_off == 0 and sym_name in idx_fns and idx_fns[sym_name] != blk["bin_len"]:
+                raise RuntimeError(
+                    f"cli/io block {b_idx} ({sym_name}) size {blk['bin_len']} != Index.json {idx_fns[sym_name]}"
+                )
+        if io_externs_list is None:
+            io_externs_list = list(blk["externs"])
+        elif blk["externs"] != io_externs_list:
+            raise RuntimeError(f"cli/io block {b_idx} externs list differs from block 0")
+
+    if cursor != len(io_bin):
+        raise RuntimeError(f"cli/io blocks cover {cursor} B != SignalSessionIoPlacedObj.bin {len(io_bin)} B")
+    if io_externs_list is None or len(io_externs_list) != len(idx_stubs):
+        raise RuntimeError(
+            f"cli/io PlacedObj extern count {0 if io_externs_list is None else len(io_externs_list)} "
+            f"!= SignalSessionIoIndex.json stub count {len(idx_stubs)}"
+        )
+
+    io_extern_set = set(io_externs_list)
+    if len(io_extern_set) != len(io_externs_list):
+        raise RuntimeError("duplicate mangled extern in SignalSessionIoPlacedObj.lean")
+
+    demangled_externs = demangle_symbols_no_verbose(io_externs_list)
+    if sorted(demangled_externs) != sorted(idx_stubs):
+        raise RuntimeError(
+            "cli/io PlacedObj demangled externs != SignalSessionIoIndex.json stubs (GK row 186 C1-2): "
+            f"only_in_placed={sorted(set(demangled_externs) - set(idx_stubs))}, "
+            f"only_in_index={sorted(set(idx_stubs) - set(demangled_externs))}"
+        )
+    demangled_by_ext = dict(zip(io_externs_list, demangled_externs))
+
+    for b_idx, blk in enumerate(blocks):
+        for rel in blk["relocs"]:
+            if rel["kind"] not in ("call26", "jump26"):
+                raise RuntimeError(f"unexpected reloc kind {rel['kind']!r} in cli/io block {b_idx}")
+            sym = rel["sym"]
+            if sym not in internal_syms and sym not in io_extern_set:
+                raise RuntimeError(
+                    f"cli/io block {b_idx} reloc at +{rel['off']} targets {sym!r}, "
+                    "which is neither an internal block symbol nor in generated `externs`"
+                )
+
+    _check_handle_error_manifest_relocs(blocks)
+
+    main_placed_lean = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionPlacedObj.lean"
+    if not main_placed_lean.is_file():
+        raise RuntimeError(f"missing img0 PlacedObj module (GK row 186 C1-1): {main_placed_lean}")
+
+    img0_externs = parse_placed_obj_externs(main_placed_lean)
+    io_handle_err = [e for e in io_externs_list if "handle_error" in e]
+    if not io_handle_err:
+        raise RuntimeError("expected `alloc::raw_vec::handle_error` in generated cli/io externs")
+    for he in io_handle_err:
+        if he not in img0_externs:
+            raise RuntimeError(
+                f"cli/io handle_error symbol {he!r} not in img0 LibsignalSessionPlacedObj externs (crate-hash drift!)"
+            )
+
+    branch_set = set(lock.get("branch_stubs", []))
+    io_no_shim = [e for e in io_externs_list if "no_alloc_shim_is_unstable" in e]
+    img0_no_shim = sorted(e for e in img0_externs if "no_alloc_shim_is_unstable" in e)
+    if len(io_no_shim) != 1 or io_no_shim != img0_no_shim:
+        raise RuntimeError(
+            f"no_alloc_shim_is_unstable mismatch between cli/io ({io_no_shim}) and img0 ({img0_no_shim}) (C1-3)"
+        )
+    no_shim_sym = io_no_shim[0]
+    any_branch_no_shim = any("no_alloc_shim_is_unstable" in b for b in branch_set)
+    if (no_shim_sym in branch_set) != any_branch_no_shim:
+        raise RuntimeError(f"inconsistent branch_stubs policy for {no_shim_sym!r} (C1-3)")
+    if verify_in_elf and no_shim_sym not in branch_set:
+        raise RuntimeError(
+            f"inconsistent branch_stubs policy for {no_shim_sym!r} (expected branched in both img0 and cli/io, C1-3)"
+        )
+
+    main_obj_lean = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionObj.lean"
+    pre_he_stub: tuple[int, str, int] | None = None
+    if main_obj_lean.is_file() and PINNED_HANDLE_ERROR_SYM not in branch_set:
+        pre_he_stub = prelink_lookup_stub_by_mangled_name(
+            main_placed_lean, main_obj_lean, PINNED_HANDLE_ERROR_SYM
+        )
+    if "signal_session_io_path" in lock and main_obj_lean.is_file():
+        io_s_path = io_asm_path if io_asm_path is not None else (repo_root / str(lock["signal_session_io_path"]))
+        if not io_s_path.is_file():
+            raise RuntimeError(f"SR-48(a): missing rendered IO assembly file {io_s_path}")
+        if _strip_leading_asm_banner(io_s_path.read_text(encoding="utf-8")) != _strip_leading_asm_banner(
+            render_io_placed_asm(repo_root, lock)
+        ):
+            raise RuntimeError(
+                f"SR-48(a): {io_s_path} on disk differs from deterministic re-render (`--render-io-asm`)"
+            )
+
+    img0_no_shim_tgt: int | None = None
+    if all_stubs is not None and base is not None:
+        img0_ns_entries = [st for st in all_stubs if st.get("extern") == no_shim_sym]
+        if len(img0_ns_entries) != 1:
+            raise RuntimeError(
+                f"expected 1 img0 link.json stub entry for {no_shim_sym!r}, found {img0_ns_entries} (C1-3)"
+            )
+        ns_mode = img0_ns_entries[0].get("mode")
+        if (ns_mode == "branch") != (no_shim_sym in branch_set):
+            raise RuntimeError(
+                f"img0 {no_shim_sym!r} stub mode {ns_mode!r} disagrees with branch_stubs (C1-3)"
+            )
+        if no_shim_sym in branch_set:
+            raw_tgt = img0_ns_entries[0].get("target")
+            if raw_tgt is None:
+                raise RuntimeError(f"img0 {no_shim_sym!r} branch stub missing resolved target in link.json (C1-3)")
+            img0_no_shim_tgt = int(raw_tgt)
+
+    if verify_in_elf:
+        if elf_bytes is None or segs is None:
+            raise RuntimeError("verify_in_elf=True requires elf_bytes and PT_LOAD segs")
+        symtab = parse_elf64_symtab(elf_bytes)
+        proved_syms = collect_proved_block_symbols(repo_root, lock)
+
+        defined_funcs_by_va: dict[int, list[str]] = {}
+        for s_name, entries in symtab.items():
+            for st_val, _st_sz, st_info, st_shndx in entries:
+                if st_shndx != 0 and (st_info & 0xF) == 2:
+                    defined_funcs_by_va.setdefault(st_val, []).append(s_name)
+
+        def read_rx_word(va: int) -> int:
+            for p_off, p_vaddr, p_filesz, _p_memsz, p_flags in segs:
+                if (p_flags & 0x5) == 0x5 and p_vaddr <= va and va + 4 <= p_vaddr + p_filesz:
+                    w, = struct.unpack_from("<I", elf_bytes, p_off + (va - p_vaddr))
+                    return w
+            raise RuntimeError(f"cli/io address {va:#x} not covered by any r-x PT_LOAD segment")
+
+        block_vas: dict[int, int] = {}
+        for b_idx, blk in enumerate(blocks):
+            primary_demangled = blk["symbols"][0][0]
+            mangled_exp = export_syms.get(primary_demangled)
+            if mangled_exp is not None:
+                cands = [v for (v, _sz, info, shndx) in symtab.get(mangled_exp, []) if shndx != 0 and (info & 0xF) == 2]
+                if len(cands) != 1:
+                    raise RuntimeError(
+                        f"cli/io export {mangled_exp!r} ({primary_demangled}) expected 1 defined STT_FUNC ELF symbol, got {cands}"
+                    )
+                block_vas[b_idx] = cands[0]
+
+        progress = True
+        while progress and len(block_vas) < len(blocks):
+            progress = False
+            for b_idx, blk in enumerate(blocks):
+                if b_idx not in block_vas:
+                    continue
+                b_va = block_vas[b_idx]
+                for rel in blk["relocs"]:
+                    if rel["sym"] in internal_syms:
+                        tgt_blk, tgt_off = internal_syms[rel["sym"]]
+                        w = read_rx_word(b_va + rel["off"])
+                        tgt_va = decode_pc_rel_target(w, b_va + rel["off"])
+                        if tgt_va is None:
+                            raise RuntimeError(f"cli/io block {b_idx}+{rel['off']} is not a PC-relative branch")
+                        derived_base = tgt_va - tgt_off
+                        if tgt_blk in block_vas and block_vas[tgt_blk] != derived_base:
+                            raise RuntimeError(
+                                f"conflicting ELF base for cli/io block {tgt_blk}: {block_vas[tgt_blk]:#x} vs {derived_base:#x}"
+                            )
+                        if tgt_blk not in block_vas:
+                            block_vas[tgt_blk] = derived_base
+                            progress = True
+
+        if len(block_vas) != len(blocks):
+            missing_blks = sorted(set(range(len(blocks))) - set(block_vas.keys()))
+            raise RuntimeError(f"could not resolve ELF VAs for cli/io blocks: {missing_blks}")
+
+        resolved_extern_def: dict[str, tuple[int, int]] = {}
+        for ext in io_externs_list:
+            undefs = [v for (v, _sz, _info, shndx) in symtab.get(ext, []) if shndx == 0]
+            if undefs:
+                raise RuntimeError(f"generated cli/io extern {ext!r} has SHN_UNDEF entry in .symtab (C1-4)")
+            if ext == PINNED_HANDLE_ERROR_SYM and ext not in branch_set:
+                if symtab.get(ext, []):
+                    raise RuntimeError(
+                        f"unbranched panic extern {ext!r} must have 0 defined STT_FUNC / .symtab entries "
+                        f"(no failstop_z def), got {symtab[ext]} (C1-4 / SR-48)"
+                    )
+                continue
+            defs = [
+                (v, sz)
+                for (v, sz, info, shndx) in symtab.get(ext, [])
+                if shndx != 0 and (info & 0xF) == 2
+            ]
+            if len(defs) != 1:
+                raise RuntimeError(
+                    f"generated cli/io extern {ext!r} missing unique defined STT_FUNC symbol in .symtab: got {defs} (C1-4)"
+                )
+            def_va, def_sz = defs[0]
+            resolved_extern_def[ext] = (def_va, def_sz)
+            if ext == no_shim_sym and img0_no_shim_tgt is not None and def_va != img0_no_shim_tgt:
+                raise RuntimeError(
+                    f"cli/io {no_shim_sym!r} ELF target {def_va:#x} != img0 target {img0_no_shim_tgt:#x} (C1-3)"
+                )
+
+            def is_proved_or_contract(sym_nm: str) -> bool:
+                if sym_nm in proved_syms:
+                    return True
+                dem_nm = demangled_by_ext.get(sym_nm) or demangle_symbols_no_verbose([sym_nm])[0]
+                return dem_nm in REVIEWED_IO_EXTERN_CONTRACTS
+
+            def_word = read_rx_word(def_va)
+            if def_sz == 4 and (def_word & 0xFC000000) == 0x14000000:
+                hop_va = decode_pc_rel_target(def_word, def_va)
+                if hop_va is None:
+                    raise RuntimeError(f"cli/io 1-insn alias {ext!r} at {def_va:#x} failed branch decode (C1-4)")
+                hop_syms = [s for s in defined_funcs_by_va.get(hop_va, []) if s != ext]
+                if not hop_syms or not any(is_proved_or_contract(hs) for hs in hop_syms):
+                    raise RuntimeError(
+                        f"cli/io 1-insn alias {ext!r} ({def_va:#x} -> {hop_va:#x}, syms={hop_syms}) "
+                        "does not land on a proved block or reviewed contract (C1-4)"
+                    )
+            elif not is_proved_or_contract(ext):
+                raise RuntimeError(
+                    f"cli/io extern {ext!r} ({def_va:#x}) does not map to a proved block or reviewed contract (C1-4)"
+                )
+
+        verified_he_relocs = 0
+        for b_idx, blk in enumerate(blocks):
+            b_va = block_vas[b_idx]
+            if (b_va % 4) != 0:
+                raise RuntimeError(f"cli/io block {b_idx} VA {b_va:#x} is not 4-byte aligned")
+            raw_slice = io_bin[blk["bin_off"] : blk["bin_off"] + blk["bin_len"]]
+            reloc_by_off = {rel["off"]: rel for rel in blk["relocs"]}
+            for off in range(0, blk["bin_len"], 4):
+                elf_w = read_rx_word(b_va + off)
+                raw_w, = struct.unpack_from("<I", raw_slice, off)
+                if off not in reloc_by_off:
+                    if elf_w != raw_w:
+                        raise RuntimeError(
+                            f"cli/io block {b_idx} non-reloc word mismatch at {b_va + off:#x} (+{off:#x}): "
+                            f"elf={elf_w:#010x} != PlacedObj.bin={raw_w:#010x}"
+                        )
+                else:
+                    rel = reloc_by_off[off]
+                    exp_op = 0x94000000 if rel["kind"] == "call26" else 0x14000000
+                    if (elf_w & 0xFC000000) != exp_op:
+                        raise RuntimeError(
+                            f"cli/io block {b_idx} reloc at +{off:#x} expected {rel['kind']}, got {elf_w:#010x}"
+                        )
+                    tgt_va = decode_pc_rel_target(elf_w, b_va + off)
+                    if tgt_va is None:
+                        raise RuntimeError(f"cli/io block {b_idx}+{off:#x} failed branch decode")
+                    if rel["sym"] in internal_syms:
+                        tb, toff = internal_syms[rel["sym"]]
+                        if tgt_va != block_vas[tb] + toff:
+                            raise RuntimeError(
+                                f"cli/io block {b_idx}+{off:#x} internal target {tgt_va:#x} != {block_vas[tb] + toff:#x}"
+                            )
+                    else:
+                        ext_sym = rel["sym"]
+                        if ext_sym == PINNED_HANDLE_ERROR_SYM and ext_sym not in branch_set:
+                            if all_stubs is None or base is None:
+                                raise RuntimeError("C1-4/SR-48 requires link.json stubs + base for handle_error check")
+                            j_idx, j_sym, j_off = lookup_postlink_stub_by_name(all_stubs, PINNED_HANDLE_ERROR_SYM)
+                            if pre_he_stub is not None and pre_he_stub != (j_idx, j_sym, j_off):
+                                raise RuntimeError(
+                                    f"SR-48(a): pre-link {pre_he_stub} != link.json {(j_idx, j_sym, j_off)}"
+                                )
+                            if all_stubs[j_idx].get("mode") != "zero":
+                                raise RuntimeError(
+                                    f"C1-4/SR-48: {j_sym} mode={all_stubs[j_idx].get('mode')!r} != 'zero'"
+                                )
+                            exp_he_va = base + j_off
+                            if read_rx_word(exp_he_va) != 0:
+                                raise RuntimeError(
+                                    f"C1-4/SR-48: {j_sym} at {exp_he_va:#x} != 0x00000000"
+                                )
+                            if rel["kind"] != "call26" or rel.get("addend", 0) != 0 or tgt_va != exp_he_va:
+                                raise RuntimeError(
+                                    f"cli/io unbranched panic {ext_sym!r} at {b_va + off:#x} -> {tgt_va:#x} "
+                                    f"!= exact img0 stub {j_sym} ({exp_he_va:#x}) (C1-4 / SR-48)"
+                                )
+                            verified_he_relocs += 1
+                        else:
+                            def_va, _def_sz = resolved_extern_def[ext_sym]
+                            if tgt_va != def_va:
+                                stub_w = read_rx_word(tgt_va)
+                                if (stub_w & 0xFC000000) != 0x14000000 or decode_pc_rel_target(stub_w, tgt_va) != def_va:
+                                    raise RuntimeError(
+                                        f"cli/io block {b_idx}+{off:#x} extern {ext_sym!r} branches to {tgt_va:#x} "
+                                        f"(word {stub_w:#010x}), not defined symbol {def_va:#x} (C1-4)"
+                                    )
+                            if ext_sym == no_shim_sym and img0_no_shim_tgt is not None and def_va != img0_no_shim_tgt:
+                                raise RuntimeError(
+                                    f"cli/io call site {b_va + off:#x} for {no_shim_sym!r} resolves to {def_va:#x} "
+                                    f"!= img0 target {img0_no_shim_tgt:#x} (C1-3)"
+                                )
+
+        if PINNED_HANDLE_ERROR_SYM not in branch_set and verified_he_relocs != PINNED_HANDLE_ERROR_RELOC_COUNT:
+            raise RuntimeError(
+                f"C1-4/SR-48: expected exactly {PINNED_HANDLE_ERROR_RELOC_COUNT} verified ELF handle_error "
+                f"relocations, found {verified_he_relocs}"
+            )
+
+    if verbose:
+        mode_tag = "ELF+manifest" if verify_in_elf else "manifest"
+        print(
+            f"cli-elf: verified cli/io placed {mode_tag} "
+            f"({len(blocks)} blocks, {len(io_bin)} B, {len(io_externs_list)} generated externs, "
+            f"1:1 Index.json stub match, 0 hand-written extern lists)"
+        )
+    return (len(blocks), len(io_externs_list))
+
+
+def verify_b2_stubs_and_code(
+    elf_path: pathlib.Path,
+    link_json_path: pathlib.Path,
+    code_bin_path: pathlib.Path,
+    config_toml_path: pathlib.Path,
+    lock: dict[str, Any],
+    repo_root: pathlib.Path | None = None,
+    obj_lean_path: pathlib.Path | None = None,
+    allowed_dead_callers: dict[tuple[int, str], str] | None = None,
+    expect_alias_present: bool = False,
+    unpinned: bool = False,
+    io_asm_path: pathlib.Path | None = None,
+    verbose: bool = True,
+) -> None:
+    """Route B2 check:
+    1. `branch_stubs` in `inputs.lock` is the exact 5-symbol Rust allocator set and no `[cli_branch_stubs]` in `translation.toml`;
+    2. in `link.json`, the 5 allocator stubs have `mode == "branch"` with valid `B <target>` words in ELF and `0` in `code.bin`,
+       while all remaining `img0` stubs (`135` at `(1)–(6)`) have `mode == "zero"` and equal `0` (`udf #0`) in both ELF and `code.bin`;
+    3. ELF `.img.text` (`[base, base + len(code.bin))`) == `code.bin` byte-for-byte across all `558,544` non-branched bytes (`139,636` words);
+    4. dynamic `cli/io` placed manifest check (`SignalSessionIoIndex.json` + `SignalSessionIoPlacedObj.{lean,bin}`, `0` hand-written extern lists);
+    5. `0` reachable references to unhooked `memcmp` stub (`udf #0`).
+    """
+    elf_bytes = elf_path.read_bytes()
+    code_bin = code_bin_path.read_bytes()
+    link_meta = json.loads(link_json_path.read_text(encoding="utf-8"))
+
+    base = int(lock["base"])
+    if len(code_bin) != int(lock["image_code_size"]):
+        raise RuntimeError(f"code.bin size {len(code_bin)} != lock {lock['image_code_size']}")
+    code_bin_sha = hashlib.sha256(code_bin).hexdigest()
+    if code_bin_sha != lock["image_code_sha256"]:
+        raise RuntimeError(f"code.bin sha256 {code_bin_sha} != lock {lock['image_code_sha256']}")
+
+    if link_meta.get("schema") != "snapshot-link/1":
+        raise RuntimeError(f"link.json: expected schema='snapshot-link/1', got {link_meta.get('schema')!r}")
+    chk = link_meta.get("check", {})
+    chk_errors = chk.get("errors")
+    if chk_errors != []:
+        raise RuntimeError(f"link.json check.errors non-empty: {chk_errors}")
+    if int(link_meta["base"]) != base:
+        raise RuntimeError(f"link.json base {link_meta['base']:#x} != lock {base:#x}")
+
+    expected_branch_names = list(lock.get("branch_stubs", []))
+    expected_branch_set = set(expected_branch_names)
+    expected_branch_count = 9 if lock.get("signal_session_io_path") else 5
+    if len(expected_branch_names) != expected_branch_count or len(expected_branch_set) != expected_branch_count:
+        raise RuntimeError(
+            f"Route B2/F3 requires exactly {expected_branch_count} distinct branch_stubs in inputs.lock, got {expected_branch_names!r}"
+        )
+
+    exp_checked_code_bytes = len(code_bin) - 4 * len(expected_branch_set)
+    if int(chk.get("codeBytes", -1)) != exp_checked_code_bytes:
+        raise RuntimeError(
+            f"link.json check.codeBytes={chk.get('codeBytes')} != expected {exp_checked_code_bytes}"
+        )
+    if int(chk.get("dataBytes", -1)) != int(lock["image_data_size"]):
+        raise RuntimeError(
+            f"link.json check.dataBytes={chk.get('dataBytes')} != lock {lock['image_data_size']}"
+        )
+
+    img_meta = link_meta.get("image", {})
+    if img_meta.get("codeSha256") != lock["image_code_sha256"]:
+        raise RuntimeError(
+            f"link.json image.codeSha256={img_meta.get('codeSha256')} != lock {lock['image_code_sha256']}"
+        )
+    if img_meta.get("dataSha256") != lock["image_data_sha256"]:
+        raise RuntimeError(
+            f"link.json image.dataSha256={img_meta.get('dataSha256')} != lock {lock['image_data_sha256']}"
+        )
+
+    cfg_toml = tomllib.loads(config_toml_path.read_text(encoding="utf-8"))
+    if "cli_branch_stubs" in cfg_toml:
+        raise RuntimeError(
+            f"forbids [cli_branch_stubs] in {config_toml_path}, found {cfg_toml['cli_branch_stubs']!r}"
+        )
+
+    e_entry, segs = parse_elf64_header_and_pt_loads(elf_bytes)
+    text_seg = None
+    for p_offset, p_vaddr, p_filesz, _p_memsz, p_flags in segs:
+        if p_vaddr <= base and base + len(code_bin) <= p_vaddr + p_filesz:
+            if (p_flags & 0x7) != 0x5:
+                raise RuntimeError(f"PT_LOAD covering {base:#x} has flags {p_flags:#x}, expected r-x (0x5)")
+            text_seg = (p_offset, p_vaddr, p_filesz)
+            break
+    if text_seg is None:
+        raise RuntimeError(f"no PT_LOAD segment in {elf_path} covers [{base:#x}, {base + len(code_bin):#x})")
+
+    p_offset, p_vaddr, _ = text_seg
+    elf_code_start = p_offset + (base - p_vaddr)
+    elf_code = elf_bytes[elf_code_start : elf_code_start + len(code_bin)]
+
+    all_stubs = link_meta.get("stubs", [])
+    expected_stub_count = int(lock.get("expected_stub_count", DEFAULT_EXPECTED_STUB_COUNT))
+    if len(all_stubs) != expected_stub_count:
+        raise RuntimeError(
+            f"link.json stub count {len(all_stubs)} != expected {expected_stub_count}"
+        )
+
+    seen_branch_names: set[str] = set()
+    branch_byte_offs: set[int] = set()
+    for st in all_stubs:
+        ext_name = str(st.get("extern", ""))
+        off = int(st["off"])
+        mode = st.get("mode", link_meta.get("stubMode"))
+        if off < 0 or off + 4 > len(elf_code) or (off % 4) != 0:
+            raise RuntimeError(f"stub {ext_name!r} offset +{off:#x} out of aligned .img.text bounds")
+        elf_word, = struct.unpack_from("<I", elf_code, off)
+        code_word, = struct.unpack_from("<I", code_bin, off)
+        if code_word != 0:
+            raise RuntimeError(
+                f"stub {ext_name!r} at +{off:#x} in code.bin must be 0x00000000, got {code_word:#010x}"
+            )
+        if ext_name in expected_branch_set:
+            if mode != "branch":
+                raise RuntimeError(
+                    f"allocator stub {ext_name!r} at +{off:#x} expected mode='branch', got mode={mode!r}"
+                )
+            if (elf_word & 0xFC000000) != 0x14000000:
+                raise RuntimeError(
+                    f"allocator stub {ext_name!r} at +{off:#x} must encode AArch64 `B imm26`, got {elf_word:#010x}"
+                )
+            decoded_tgt = decode_pc_rel_target(elf_word, base + off)
+            json_tgt = st.get("target")
+            if json_tgt is None or decoded_tgt != int(json_tgt):
+                raise RuntimeError(
+                    f"allocator stub {ext_name!r} at +{off:#x} decoded target {decoded_tgt!r} != link.json target {json_tgt!r}"
+                )
+            seen_branch_names.add(ext_name)
+            for b_i in range(4):
+                branch_byte_offs.add(off + b_i)
+        else:
+            if mode != "zero":
+                raise RuntimeError(
+                    f"non-allocator stub {ext_name!r} at +{off:#x} must have mode='zero', got mode={mode!r}"
+                )
+            if st.get("target") is not None:
+                raise RuntimeError(
+                    f"zero stub {ext_name!r} at +{off:#x} has unexpected target={st.get('target')!r}"
+                )
+            if elf_word != 0:
+                raise RuntimeError(
+                    f"zero stub {ext_name!r} at +{off:#x} must be 0x00000000 (`udf #0`), got {elf_word:#010x}"
+                )
+
+    if seen_branch_names != expected_branch_set:
+        missing = sorted(expected_branch_set - seen_branch_names)
+        raise RuntimeError(f"missing expected allocator branch stubs in link.json: {missing}")
+
+    if len(elf_code) != len(code_bin):
+        raise RuntimeError("ELF .img.text length != code.bin length")
+    for idx, (a, b) in enumerate(zip(code_bin, elf_code)):
+        if idx in branch_byte_offs:
+            continue
+        if a != b:
+            raise RuntimeError(
+                f"Route B2 .img.text check FAILED: non-branch byte differs at +{idx:#x}: "
+                f"code.bin={a:#04x}, elf={b:#04x}"
+            )
+
+    if obj_lean_path is None:
+        cand_obj_lean = code_bin_path.with_name("LibsignalSessionObj.lean")
+        if cand_obj_lean.is_file():
+            obj_lean_path = cand_obj_lean
+
+    _reach_refs, dead_refs = verify_no_reachable_memcmp_stub_refs(
+        elf_bytes=elf_bytes,
+        e_entry=e_entry,
+        segs=segs,
+        base=base,
+        code_len=len(code_bin),
+        all_stubs=all_stubs,
+        obj_lean_path=obj_lean_path,
+        allowed_dead_callers=allowed_dead_callers,
+    )
+
+    if repo_root is not None:
+        verify_io_placed_manifest_and_blocks(
+            repo_root=repo_root,
+            lock=lock,
+            elf_bytes=elf_bytes,
+            segs=segs,
+            all_stubs=all_stubs,
+            base=base,
+            verify_in_elf=bool(lock.get("io_config_path") or lock.get("signal_session_io_path")),
+            io_asm_path=io_asm_path,
+            verbose=verbose,
+        )
+
+    alias_verified = verify_std_symtab_and_block621_alias(
+        elf_bytes=elf_bytes,
+        elf_code=elf_code,
+        code_bin=code_bin,
+        base=base,
+        all_stubs=all_stubs,
+        repo_root=repo_root,
+        expect_alias_present=expect_alias_present,
+        unpinned=unpinned,
+    )
+
+    got_elf_sha = hashlib.sha256(elf_bytes).hexdigest()
+    if not unpinned:
+        exp_elf_size = int(lock["elf_size"])
+        exp_elf_sha = str(lock["elf_sha256"]).strip().lower()
+        if len(elf_bytes) != exp_elf_size or got_elf_sha != exp_elf_sha:
+            raise RuntimeError(
+                f"built ELF (size={len(elf_bytes)}, sha256={got_elf_sha}) != "
+                f"inputs.lock (elf_size={exp_elf_size}, elf_sha256={exp_elf_sha})"
+            )
+        if link_meta.get("elf", {}).get("sha256") != exp_elf_sha:
+            raise RuntimeError(
+                f"link.json elf.sha256={link_meta.get('elf', {}).get('sha256')} != inputs.lock {exp_elf_sha}"
+            )
+    else:
+        if link_meta.get("elf", {}).get("sha256") != got_elf_sha:
+            raise RuntimeError(
+                f"link.json elf.sha256={link_meta.get('elf', {}).get('sha256')} != built ELF {got_elf_sha}"
+            )
+
+    if verbose:
+        alias_msg = (
+            ", 1 Block-621 MergeFunctions alias verified (26/26 PlacedCode621 words)"
+            if alias_verified
+            else ""
+        )
+        print(
+            f"cli-elf: verified Route B2 .img.text ({len(code_bin)} B at {base:#x}, sha256={code_bin_sha[:12]}…): "
+            f"{len(expected_branch_set)} branch stubs, {len(all_stubs) - len(expected_branch_set)} zero (`udf #0`) stubs, "
+            f"{exp_checked_code_bytes} non-branch bytes identical, "
+            f"0 reachable memcmp stub refs ({dead_refs} dead-fn refs){alias_msg}"
+        )
+
+
+def prepare_repo_and_bins(
+    repo_root: pathlib.Path,
+    engine_dir: pathlib.Path,
+    explicit_engine: bool,
+    lock: dict[str, Any],
+    work_dir: pathlib.Path,
+    env: dict[str, str],
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path | None]:
+    """Always export fresh `.GeneratedLean/GeneratedLean/*` sidecars under `work_dir` via
+    `rust-obj2lean` from the pinned configs and verify their SHA-256/size pins against `inputs.lock`.
+
+    Ignores any existing `repo_root/.GeneratedLean`, never writes into `repo_root/.GeneratedLean`,
+    and uses no cross-run sidecar cache (`d2-sidecars-*`). Returns
+    `(effective_repo_root, config_rel_path, code_bin_path, data_bin_path, obj_lean_path)`.
+    """
+    cfg_rel = pathlib.Path(lock["config_path"])
+    orig_cfg = repo_root / cfg_rel
+    orig_cfg_data = tomllib.loads(orig_cfg.read_text(encoding="utf-8"))
+    has_d2_key = orig_cfg_data.get("page_separate_data") is True
+    if not explicit_engine and not has_d2_key:
+        raise RuntimeError(
+            f"{orig_cfg} is missing `page_separate_data = true` (required in default submodule mode)"
+        )
+
+    export_cfgs: list[pathlib.Path] = [orig_cfg]
+    io_cfg_raw = str(lock.get("io_config_path", "")).strip()
+    has_io_placed = bool(io_cfg_raw or "io_placed_bin_path" in lock)
+    if has_io_placed:
+        io_cfg_rel = pathlib.Path(
+            io_cfg_raw or "third_party/libsignal/libsignal-session/cli/io/translation.toml"
+        )
+        io_cfg = repo_root / io_cfg_rel
+        if not io_cfg.is_file():
+            raise RuntimeError(f"missing pinned cli/io translation config: {io_cfg}")
+        export_cfgs.append(io_cfg)
+
+    eff_repo = work_dir / "repo_view"
+    if eff_repo.exists():
+        shutil.rmtree(eff_repo)
+    eff_repo.mkdir(parents=True, exist_ok=True)
+    for entry in repo_root.iterdir():
+        if entry.name == ".GeneratedLean":
+            continue
+        (eff_repo / entry.name).symlink_to(entry)
+
+    export_out = eff_repo / ".GeneratedLean"
+    export_out.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        *engine_tool_cmd(engine_dir, "rust-obj2lean", env=env),
+        "--out-dir", str(export_out),
+        "--namespace-prefix", "CryptoVerification",
+    ]
+    for cfg_path in export_cfgs:
+        cmd.extend(["--config", str(cfg_path)])
+    t_exp = time.monotonic()
+    subprocess.run(cmd, cwd=str(repo_root), check=True, env=env)
+    exp_elapsed = time.monotonic() - t_exp
+
+    gen_out = export_out / "GeneratedLean"
+    exp_code = gen_out / "LibsignalSessionObj.code.bin"
+    exp_data = gen_out / "LibsignalSessionObj.data.bin"
+    exp_lean = gen_out / "LibsignalSessionObj.lean"
+    exp_placed_lean = gen_out / "LibsignalSessionPlacedObj.lean"
+    exp_placed_bin = gen_out / "LibsignalSessionPlacedObj.bin"
+    for req in (exp_code, exp_data, exp_lean, exp_placed_lean, exp_placed_bin):
+        if not req.is_file():
+            raise RuntimeError(f"rust-obj2lean succeeded, but expected output is missing: {req}")
+
+    code_sha = sha256_file(exp_code)
+    data_sha = sha256_file(exp_data)
+    if code_sha != lock["image_code_sha256"]:
+        raise RuntimeError(
+            f"exported LibsignalSessionObj.code.bin sha256 {code_sha} != inputs.lock {lock['image_code_sha256']}"
+        )
+    if data_sha != lock["image_data_sha256"]:
+        raise RuntimeError(
+            f"exported LibsignalSessionObj.data.bin sha256 {data_sha} != inputs.lock {lock['image_data_sha256']}"
+        )
+    if "image_code_size" in lock and exp_code.stat().st_size != int(lock["image_code_size"]):
+        raise RuntimeError(
+            f"exported LibsignalSessionObj.code.bin size {exp_code.stat().st_size} != inputs.lock {lock['image_code_size']}"
+        )
+    if "image_data_size" in lock and exp_data.stat().st_size != int(lock["image_data_size"]):
+        raise RuntimeError(
+            f"exported LibsignalSessionObj.data.bin size {exp_data.stat().st_size} != inputs.lock {lock['image_data_size']}"
+        )
+
+    if has_io_placed:
+        io_lean_rel = pathlib.Path(
+            str(lock.get("io_placed_lean_path", ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.lean"))
+        )
+        io_bin_rel = pathlib.Path(
+            str(lock.get("io_placed_bin_path", ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.bin"))
+        )
+        io_idx_rel = pathlib.Path(
+            str(lock.get("io_index_path", ".GeneratedLean/GeneratedLean/SignalSessionIoIndex.json"))
+        )
+        exp_io_lean = eff_repo / io_lean_rel
+        exp_io_bin = eff_repo / io_bin_rel
+        exp_io_idx = eff_repo / io_idx_rel
+        for req in (exp_io_lean, exp_io_bin, exp_io_idx):
+            if not req.is_file():
+                raise RuntimeError(f"rust-obj2lean succeeded, but expected cli/io output is missing: {req}")
+        if "io_placed_bin_sha256" in lock:
+            io_bin_sha = sha256_file(exp_io_bin)
+            if io_bin_sha != lock["io_placed_bin_sha256"]:
+                raise RuntimeError(
+                    f"exported SignalSessionIoPlacedObj.bin sha256 {io_bin_sha} != inputs.lock {lock['io_placed_bin_sha256']}"
+                )
+        if "io_placed_bin_size" in lock and exp_io_bin.stat().st_size != int(lock["io_placed_bin_size"]):
+            raise RuntimeError(
+                f"exported SignalSessionIoPlacedObj.bin size {exp_io_bin.stat().st_size} != inputs.lock {lock['io_placed_bin_size']}"
+            )
+
+    print(f"cli-elf: rust-obj2lean scratch export verified in {exp_elapsed:.2f}s ({len(export_cfgs)} config(s))")
+    return eff_repo, cfg_rel, exp_code, exp_data, exp_lean
+
+
+def expected_engine_commit(lock: dict[str, Any]) -> str:
+    c1 = lock.get("arm64_semantics_commit")
+    c2 = lock.get("engine_commit")
+    if c1 and c2 and c1 != c2:
+        raise RuntimeError(
+            f"inputs.lock has conflicting arm64_semantics_commit={c1!r} vs engine_commit={c2!r}"
+        )
+    commit = c1 or c2
+    if not commit:
+        raise RuntimeError("inputs.lock missing `arm64_semantics_commit` / `engine_commit`")
+    return str(commit)
+
+
+
+def relocated_dead_memcmp_callers(
+    obj_lean: pathlib.Path | None, code_bin: pathlib.Path, base: int
+) -> dict[tuple[int, str], str]:
+    """`--image-dir` (bug injection only): `KNOWN_DEAD_MEMCMP_CALLERS` with each function's address
+    taken from the export's own symbol table, since a patch moves code. The names (and so the set of
+    allowed dead callers) are unchanged, and `verify_no_reachable_memcmp_stub_refs` still re-verifies
+    on the built ELF that each one is dead."""
+    why_by_name = {name: why for (_addr, name), why in KNOWN_DEAD_MEMCMP_CALLERS.items()}
+    intervals = load_code_symbols_from_obj_lean(obj_lean, code_bin.stat().st_size)
+    return {
+        (base + start, name): why_by_name[name]
+        for start, _end, name in intervals
+        if name in why_by_name
+    }
+
+
+def unpinned_image_lock(
+    lock: dict[str, Any], image_dir: pathlib.Path
+) -> tuple[dict[str, Any], pathlib.Path, pathlib.Path, pathlib.Path]:
+    """`--image-dir` (bug injection only): `lock` with its image pins (`image_code_size`,
+    `image_code_sha256`, `image_data_size`, `image_data_sha256`) and its stub count
+    (`expected_stub_count`) replaced by those of the `rust-obj2lean` export in `image_dir`, plus that
+    export's `code.bin`, `data.bin` and `.lean` (requiring `LibsignalSessionPlacedObj.{lean,bin}`).
+    Every other pin (toolchain, engine, `std-main/*`, `rdl_shim.S`, `cli/io`, musl, base, branch_stubs)
+    and every B2/F3 check still applies; only the libsignal image is no longer the pinned clean one."""
+    code = image_dir / "LibsignalSessionObj.code.bin"
+    data = image_dir / "LibsignalSessionObj.data.bin"
+    obj_lean = image_dir / "LibsignalSessionObj.lean"
+    placed_lean = image_dir / "LibsignalSessionPlacedObj.lean"
+    placed_bin = image_dir / "LibsignalSessionPlacedObj.bin"
+    for p in (code, data, obj_lean, placed_lean, placed_bin):
+        if not p.is_file():
+            raise RuntimeError(f"--image-dir: missing {p}")
+    out = dict(lock)
+    out["image_code_size"] = code.stat().st_size
+    out["image_code_sha256"] = sha256_file(code)
+    out["image_data_size"] = data.stat().st_size
+    out["image_data_sha256"] = sha256_file(data)
+    obj_text = obj_lean.read_text(encoding="utf-8")
+    st_anchor = "stubs := ["
+    start = obj_text.find(st_anchor)
+    if start < 0:
+        raise RuntimeError(f"--image-dir: no `stubs := [...]` table in {obj_lean}")
+    st_body, _ = _extract_bracketed_body(obj_text, start + len(st_anchor) - 1)
+    out["expected_stub_count"] = len(OBJ_STUB_PAIR_RE.findall(st_body))
+    return out, code, data, obj_lean
+
+
+def prepare_unpinned_repo(
+    repo_root: pathlib.Path,
+    engine_dir: pathlib.Path,
+    lock: dict[str, Any],
+    work_dir: pathlib.Path,
+    env: dict[str, str],
+    image_dir: pathlib.Path,
+    crate_root: pathlib.Path,
+) -> tuple[pathlib.Path, pathlib.Path]:
+    """Stage an isolated `eff_repo` view for `--image-dir` / `--crate-root` builds:
+    `third_party/libsignal/libsignal-session` points to `crate_root`'s session crate, and
+    `.GeneratedLean/GeneratedLean/` holds `image_dir`'s mutant `LibsignalSession*` artifacts plus
+    verified `SignalSessionIo*` placed artifacts (reused from `image_dir` or `repo_root`, else
+    exported via `rust-obj2lean` from `cli/io/translation.toml`). Never mutates `repo_root`."""
+    cfg_rel = pathlib.Path(lock["config_path"])
+    if (crate_root / cfg_rel).is_file():
+        session_crate_dir = (crate_root / cfg_rel).parent.resolve()
+    elif (crate_root / "translation.toml").is_file():
+        session_crate_dir = crate_root.resolve()
+    else:
+        raise RuntimeError(
+            f"--crate-root: missing {crate_root / cfg_rel} (or {crate_root / 'translation.toml'})"
+        )
+
+    eff_repo = work_dir / "unpinned_repo"
+    if eff_repo.exists():
+        shutil.rmtree(eff_repo)
+    eff_repo.mkdir(parents=True, exist_ok=True)
+    for entry in repo_root.iterdir():
+        if entry.name in (".GeneratedLean", "third_party"):
+            continue
+        (eff_repo / entry.name).symlink_to(entry)
+
+    tp_dst = eff_repo / "third_party"
+    tp_dst.mkdir(parents=True, exist_ok=True)
+    tp_src = repo_root / "third_party"
+    if tp_src.is_dir():
+        for entry in tp_src.iterdir():
+            if entry.name == "libsignal":
+                continue
+            (tp_dst / entry.name).symlink_to(entry)
+    ls_dst = tp_dst / "libsignal"
+    ls_dst.mkdir(parents=True, exist_ok=True)
+    ls_src = tp_src / "libsignal"
+    if ls_src.is_dir():
+        for entry in ls_src.iterdir():
+            if entry.name == "libsignal-session":
+                continue
+            (ls_dst / entry.name).symlink_to(entry)
+    (ls_dst / "libsignal-session").symlink_to(session_crate_dir)
+
+    vendor_probe = session_crate_dir / "vendor" / "libsignal" / "rust" / "protocol" / "Cargo.toml"
+    if not vendor_probe.is_file():
+        env_libsignal = pathlib.Path(env["LIBSIGNAL_SRC"]) if env.get("LIBSIGNAL_SRC", "").strip() else None
+        if env_libsignal is not None and (env_libsignal / "rust" / "protocol" / "Cargo.toml").is_file():
+            vendor_dst = session_crate_dir / "vendor" / "libsignal"
+            vendor_dst.parent.mkdir(parents=True, exist_ok=True)
+            if vendor_dst.is_symlink():
+                vendor_dst.unlink()
+            vendor_dst.symlink_to(env_libsignal.resolve())
+        else:
+            raise RuntimeError(f"--crate-root: missing vendor/libsignal at {vendor_probe}")
+
+    eff_gen = eff_repo / ".GeneratedLean" / "GeneratedLean"
+    eff_gen.mkdir(parents=True, exist_ok=True)
+
+    io_cfg_raw = str(lock.get("io_config_path", "")).strip()
+    has_io_placed = bool(io_cfg_raw or "io_placed_bin_path" in lock)
+    if has_io_placed:
+        io_lean_rel = pathlib.Path(
+            str(lock.get("io_placed_lean_path", ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.lean"))
+        )
+        io_bin_rel = pathlib.Path(
+            str(lock.get("io_placed_bin_path", ".GeneratedLean/GeneratedLean/SignalSessionIoPlacedObj.bin"))
+        )
+        io_idx_rel = pathlib.Path(
+            str(lock.get("io_index_path", ".GeneratedLean/GeneratedLean/SignalSessionIoIndex.json"))
+        )
+        io_names = (io_lean_rel.name, io_bin_rel.name, io_idx_rel.name)
+        reused = False
+        for cand_dir in (image_dir, repo_root / ".GeneratedLean" / "GeneratedLean"):
+            if all((cand_dir / nm).is_file() for nm in io_names):
+                cand_bin = cand_dir / io_bin_rel.name
+                if (
+                    ("io_placed_bin_sha256" not in lock or sha256_file(cand_bin) == lock["io_placed_bin_sha256"])
+                    and ("io_placed_bin_size" not in lock or cand_bin.stat().st_size == int(lock["io_placed_bin_size"]))
+                ):
+                    for nm in io_names:
+                        shutil.copy2(cand_dir / nm, eff_gen / nm)
+                    reused = True
+                    break
+        if not reused:
+            io_cfg_rel = pathlib.Path(
+                io_cfg_raw or "third_party/libsignal/libsignal-session/cli/io/translation.toml"
+            )
+            io_cfg = repo_root / io_cfg_rel
+            if not io_cfg.is_file():
+                raise RuntimeError(f"missing pinned cli/io translation config: {io_cfg}")
+            io_exp = work_dir / "io_export"
+            io_exp.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                *engine_tool_cmd(engine_dir, "rust-obj2lean", env=env),
+                "--out-dir", str(io_exp),
+                "--namespace-prefix", "CryptoVerification",
+                "--config", str(io_cfg),
+            ]
+            subprocess.run(cmd, cwd=str(repo_root), check=True, env=env)
+            for nm in io_names:
+                shutil.copy2(io_exp / "GeneratedLean" / nm, eff_gen / nm)
+
+    for nm in (
+        "LibsignalSessionObj.code.bin",
+        "LibsignalSessionObj.data.bin",
+        "LibsignalSessionObj.lean",
+        "LibsignalSessionPlacedObj.lean",
+        "LibsignalSessionPlacedObj.bin",
+        "LibsignalSessionIndex.json",
+    ):
+        src_p = image_dir / nm
+        if src_p.is_file():
+            shutil.copy2(src_p, eff_gen / nm)
+
+    return eff_repo, cfg_rel
+
+
+def build_into(
+    repo_root: pathlib.Path,
+    out_dir: pathlib.Path,
+    engine_dir: pathlib.Path,
+    explicit_engine: bool,
+    strip_override: bool | None,
+    isolated_cold_zig: bool = False,
+    subdir_nesting: str = "build",
+    image_dir: pathlib.Path | None = None,
+    crate_root: pathlib.Path | None = None,
+) -> pathlib.Path:
+    lock_path = repo_root / DEFAULT_REL_LOCK
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    unpinned: tuple[pathlib.Path, pathlib.Path, pathlib.Path] | None = None
+    if (image_dir is None) != (crate_root is None):
+        raise RuntimeError("--image-dir and --crate-root go together")
+    if image_dir is not None:
+        lock, u_code, u_data, u_lean = unpinned_image_lock(lock, image_dir)
+        unpinned = (u_code, u_data, u_lean)
+
+    manifest_src = verify_sha256_entry(repo_root, lock, "main_rust_manifest", "main_rust_manifest_sha256")
+    cargo_lock_src = verify_sha256_entry(repo_root, lock, "main_rust_lock_path", "main_rust_lock_sha256")
+    main_rs_src = verify_sha256_entry(repo_root, lock, "main_rust_src_path", "main_rust_src_sha256")
+    rdl_shim_src = verify_sha256_entry(repo_root, lock, "rdl_shim_path", "rdl_shim_sha256")
+    sig_io_src = (
+        verify_sha256_entry(repo_root, lock, "signal_session_io_path", "signal_session_io_sha256")
+        if lock.get("signal_session_io_path")
+        else None
+    )
+    musl_cfg_src = verify_sha256_entry(repo_root, lock, "musl_string_config_path", "musl_string_config_sha256")
+
+    exp_eng = expected_engine_commit(lock)
+    if (engine_dir / ".git").exists():
+        eng_head = subprocess.run(
+            ["git", "-C", str(engine_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if not explicit_engine:
+            if not eng_head.startswith(exp_eng):
+                raise RuntimeError(
+                    f"arm64-semantics HEAD {eng_head[:12]} does not match inputs.lock commit {exp_eng!r}"
+                )
+        else:
+            print(f"cli-elf: using explicit --engine {engine_dir} (HEAD {eng_head[:12]}, lock={exp_eng[:12]})")
+    else:
+        print(f"cli-elf: skipping arm64-semantics git HEAD check (no .git in {engine_dir}; expected {exp_eng[:12]})")
+
+    cache_tmp_root = get_cache_tmp_root()
+    with tempfile.TemporaryDirectory(dir=cache_tmp_root, prefix="cli-elf.") as run_tmp_str:
+        run_tmp = pathlib.Path(run_tmp_str)
+        env = resolve_pinned_toolchain(lock, run_tmp)
+        if isolated_cold_zig:
+            zig_cache = run_tmp / "cold-zig-cache"
+            zig_cache.mkdir(parents=True, exist_ok=True)
+            env["ZIG_GLOBAL_CACHE_DIR"] = str(zig_cache / "global")
+            env["ZIG_LOCAL_CACHE_DIR"] = str(zig_cache / "local")
+
+        ensure_musl_tarball_verified(engine_dir, lock, env)
+        if unpinned is not None and image_dir is not None and crate_root is not None:
+            eff_repo, cfg_rel = prepare_unpinned_repo(
+                repo_root, engine_dir, lock, run_tmp / subdir_nesting, env, image_dir, crate_root
+            )
+            code_bin, data_bin, obj_lean = unpinned
+            link_repo_root = eff_repo
+        else:
+            cfg_rel_for_vendor = pathlib.Path(lock["config_path"])
+            vendor_probe = (repo_root / cfg_rel_for_vendor).parent / "vendor" / "libsignal" / "rust" / "protocol" / "Cargo.toml"
+            if not vendor_probe.is_file():
+                vendor_dst = (repo_root / cfg_rel_for_vendor).parent / "vendor" / "libsignal"
+                env_libsignal = pathlib.Path(env["LIBSIGNAL_SRC"]) if env.get("LIBSIGNAL_SRC", "").strip() else None
+                home_sw = pathlib.Path.home() / "sw" / "libsignal"
+                if env_libsignal is not None and (env_libsignal / "rust" / "protocol" / "Cargo.toml").is_file():
+                    vendor_dst.parent.mkdir(parents=True, exist_ok=True)
+                    if vendor_dst.is_symlink():
+                        vendor_dst.unlink()
+                    vendor_dst.symlink_to(env_libsignal)
+                elif (home_sw / "rust" / "protocol" / "Cargo.toml").is_file():
+                    vendor_dst.parent.mkdir(parents=True, exist_ok=True)
+                    if vendor_dst.is_symlink():
+                        vendor_dst.unlink()
+                    vendor_dst.symlink_to(home_sw)
+                else:
+                    vendor_dst.parent.mkdir(parents=True, exist_ok=True)
+                    subprocess.run(
+                        [
+                            "git", "clone", "--quiet", "--depth", "1",
+                            "--branch", str(lock["libsignal_tag"]),
+                            "https://github.com/signalapp/libsignal",
+                            str(vendor_dst),
+                        ],
+                        check=True,
+                        env=env,
+                    )
+
+            eff_repo, cfg_rel, code_bin, data_bin, obj_lean = prepare_repo_and_bins(
+                repo_root, engine_dir, explicit_engine, lock, run_tmp, env
+            )
+            link_repo_root = repo_root
+
+        # Stage zero-unsafe, zero-build.rs StdBin crate outside repo_root so path remapping is uniform
+        # across arbitrary path depths (`--check`) and leaves the repo worktree completely untouched.
+        staged_harness = run_tmp / subdir_nesting / "std-harness"
+        (staged_harness / "src").mkdir(parents=True, exist_ok=True)
+        staged_manifest = staged_harness / "Cargo.toml"
+        shutil.copy2(manifest_src, staged_manifest)
+        shutil.copy2(cargo_lock_src, staged_harness / "Cargo.lock")
+        shutil.copy2(main_rs_src, staged_harness / "src" / "main.rs")
+
+        # Stage `musl_string_native_b2.toml` + `rdl_shim.S` + `string-include` + engine `third_party`.
+        native_root = run_tmp / subdir_nesting / "musl-native"
+        native_cfg_dir = native_root / "Implementation" / "musl-string"
+        native_cfg_dir.mkdir(parents=True, exist_ok=True)
+        (native_root / "third_party").symlink_to(engine_dir / "third_party")
+        vendored_inc = repo_root / DEFAULT_REL_STRING_INC
+        if not vendored_inc.is_dir():
+            raise RuntimeError(f"missing string-include directory at {vendored_inc}")
+        (native_cfg_dir / "string-include").symlink_to(vendored_inc.resolve())
+        shutil.copy2(rdl_shim_src, native_cfg_dir / "rdl_shim.S")
+        staged_io_asm: pathlib.Path | None = None
+        if sig_io_src is not None:
+            staged_io_asm = native_cfg_dir / "signal_session_io.S"
+            if unpinned is not None:
+                rendered_io_s = render_io_placed_asm(eff_repo, lock)
+                if _strip_leading_asm_banner(sig_io_src.read_text(encoding="utf-8")) == _strip_leading_asm_banner(
+                    rendered_io_s
+                ):
+                    shutil.copy2(sig_io_src, staged_io_asm)
+                else:
+                    staged_io_asm.write_text(rendered_io_s, encoding="utf-8")
+            else:
+                shutil.copy2(sig_io_src, staged_io_asm)
+        native_cfg = native_cfg_dir / "translation.toml"
+        shutil.copy2(musl_cfg_src, native_cfg)
+
+        link_stage = run_tmp / subdir_nesting / "out"
+        if link_stage.exists():
+            shutil.rmtree(link_stage)
+        link_stage.mkdir(parents=True, exist_ok=True)
+        run_started_ns = link_stage.stat().st_mtime_ns
+
+        strip_debug = bool(lock["strip_runtime_debug"]) if strip_override is None else strip_override
+        branch_stubs = list(lock.get("branch_stubs", []))
+        native_only = list(lock.get("native_only", []))
+
+        t_sl = time.monotonic()
+        sl_bin_cmd = engine_tool_cmd(engine_dir, "snapshot-link", env=env)
+        print(f"cli-elf: snapshot-link built in {time.monotonic() - t_sl:.2f}s")
+        cmd = [
+            *sl_bin_cmd,
+            "--repo-root", str(link_repo_root),
+            "--config", str(cfg_rel),
+            "--base", hex(int(lock["base"])),
+        ]
+        if io_cfg_rel := str(lock.get("io_config_path", "")).strip():
+            cmd.extend(["--config", io_cfg_rel])
+            if "io_base" in lock:
+                cmd.extend(["--base", hex(int(lock["io_base"]))])
+        cmd.extend(
+            [
+                "--stubs", str(lock["stubs"]),
+                "--branch-stubs", ",".join(branch_stubs),
+                "--native-objects", str(native_cfg),
+                "--native-only", ",".join(native_only),
+                "--main-rust", str(staged_manifest),
+                "--expect-code", str(code_bin),
+                "--expect-data", str(data_bin),
+                "--out-dir", str(link_stage),
+                "--name", DEFAULT_ELF_NAME,
+            ]
+        )
+        if strip_debug:
+            cmd.append("--strip-runtime-debug")
+
+        built_elf = link_stage / DEFAULT_ELF_NAME
+        built_json = link_stage / "link.json"
+        res = subprocess.run(cmd, cwd=str(link_repo_root), capture_output=True, text=True, env=env)
+        expect_alias_present = accept_snapshot_link_exit(
+            returncode=res.returncode,
+            stdout=res.stdout,
+            stderr=res.stderr,
+            cmd=cmd,
+            built_elf=built_elf,
+            built_json=built_json,
+            run_started_ns=run_started_ns,
+        )
+
+        verify_b2_stubs_and_code(
+            built_elf,
+            built_json,
+            code_bin,
+            eff_repo / cfg_rel,
+            lock,
+            repo_root=eff_repo,
+            obj_lean_path=obj_lean,
+            allowed_dead_callers=(
+                relocated_dead_memcmp_callers(obj_lean, code_bin, int(lock["base"]))
+                if unpinned is not None
+                else None
+            ),
+            expect_alias_present=expect_alias_present,
+            unpinned=(unpinned is not None),
+            io_asm_path=(staged_io_asm if unpinned is not None else None),
+            verbose=True,
+        )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dst_elf = out_dir / DEFAULT_ELF_NAME
+        dst_json = out_dir / "link.json"
+        tmp_dst_elf = out_dir / f".{DEFAULT_ELF_NAME}.tmp"
+        tmp_dst_json = out_dir / ".link.json.tmp"
+        shutil.copy2(built_elf, tmp_dst_elf)
+        shutil.copy2(built_json, tmp_dst_json)
+        tmp_dst_elf.replace(dst_elf)
+        tmp_dst_json.replace(dst_json)
+
+        digest = sha256_file(dst_elf)
+        size = dst_elf.stat().st_size
+        print(
+            f"cli-elf --build: OK -> {dst_elf} ({size} bytes, sha256={digest}, "
+            f"strip_runtime_debug={strip_debug})"
+        )
+        return dst_elf
+
+
+def run_alias_guard_self_tests(repo_root: pathlib.Path, elf_path: pathlib.Path) -> int:
+    """GK row 185 (`A5` + SR `S1–S5`) positive + negative self-tests on isolated scratch copies."""
+    json_path = elf_path.with_name("link.json")
+    code_bin_path = repo_root / ".GeneratedLean" / "GeneratedLean" / "LibsignalSessionObj.code.bin"
+    lock_path = repo_root / DEFAULT_REL_LOCK
+    if not (elf_path.is_file() and json_path.is_file() and code_bin_path.is_file() and lock_path.is_file()):
+        raise RuntimeError(
+            f"--self-test-alias-guard requires {elf_path}, {json_path}, {code_bin_path}, and {lock_path}"
+        )
+
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    base = int(lock["base"])
+    real_elf = elf_path.read_bytes()
+    real_json_txt = json_path.read_text(encoding="utf-8")
+    real_meta = json.loads(real_json_txt)
+    all_stubs = real_meta["stubs"]
+    code_bin = code_bin_path.read_bytes()
+
+    _e_entry, segs = parse_elf64_header_and_pt_loads(real_elf)
+    elf_code = b""
+    for p_off, p_vaddr, p_filesz, _p_memsz, _p_flags in segs:
+        if p_vaddr <= base and base + len(code_bin) <= p_vaddr + p_filesz:
+            start = p_off + (base - p_vaddr)
+            elf_code = real_elf[start : start + len(code_bin)]
+            break
+    if len(elf_code) != len(code_bin):
+        raise RuntimeError("self-test setup failed: could not slice .img.text from real ELF")
+
+    def locate_symtab(buf: bytes) -> tuple[int, int, tuple[int, ...], int, tuple[int, ...]]:
+        e_shoff, = struct.unpack_from("<Q", buf, 40)
+        e_shentsize, e_shnum = struct.unpack_from("<HH", buf, 58)
+        for sidx in range(e_shnum):
+            shdr = struct.unpack_from("<IIQQQQIIQQ", buf, e_shoff + sidx * e_shentsize)
+            if shdr[1] == 2:  # SHT_SYMTAB
+                str_idx = shdr[6]
+                str_shdr = struct.unpack_from("<IIQQQQIIQQ", buf, e_shoff + str_idx * e_shentsize)
+                return e_shoff, sidx, shdr, str_idx, str_shdr
+        raise RuntimeError("self-test setup failed: no SHT_SYMTAB")
+
+    def append_symtab_entry(
+        src_elf: bytes,
+        sym_name: str,
+        st_info: int,
+        st_shndx: int,
+        st_value: int,
+        st_size: int,
+    ) -> bytes:
+        buf = bytearray(src_elf)
+        e_shoff, sym_idx, sym_shdr, str_idx, str_shdr = locate_symtab(src_elf)
+        e_shentsize, = struct.unpack_from("<H", src_elf, 58)
+        old_str = bytes(buf[str_shdr[4] : str_shdr[4] + str_shdr[5]])
+        name_off = len(old_str)
+        new_str = old_str + sym_name.encode("utf-8") + b"\x00"
+        old_sym = bytes(buf[sym_shdr[4] : sym_shdr[4] + sym_shdr[5]])
+        new_sym = old_sym + struct.pack("<IBBHQQ", name_off, st_info, 0, st_shndx, st_value, st_size)
+
+        if len(buf) % 8:
+            buf.extend(b"\x00" * (8 - (len(buf) % 8)))
+        new_str_off = len(buf)
+        buf.extend(new_str)
+        if len(buf) % 8:
+            buf.extend(b"\x00" * (8 - (len(buf) % 8)))
+        new_sym_off = len(buf)
+        buf.extend(new_sym)
+
+        struct.pack_into(
+            "<IIQQQQIIQQ",
+            buf,
+            e_shoff + str_idx * e_shentsize,
+            str_shdr[0], str_shdr[1], str_shdr[2], str_shdr[3],
+            new_str_off, len(new_str), str_shdr[6], str_shdr[7], str_shdr[8], str_shdr[9],
+        )
+        struct.pack_into(
+            "<IIQQQQIIQQ",
+            buf,
+            e_shoff + sym_idx * e_shentsize,
+            sym_shdr[0], sym_shdr[1], sym_shdr[2], sym_shdr[3],
+            new_sym_off, len(new_sym), sym_shdr[6], sym_shdr[7], sym_shdr[8], sym_shdr[9],
+        )
+        return bytes(buf)
+
+    def mutate_pinned_alias_entry(src_elf: bytes, new_value: int, new_size: int) -> tuple[bytes, int]:
+        buf = bytearray(src_elf)
+        _e_shoff, _sym_idx, sym_shdr, _str_idx, str_shdr = locate_symtab(src_elf)
+        strtab = bytes(buf[str_shdr[4] : str_shdr[4] + str_shdr[5]])
+        for pos in range(sym_shdr[4], sym_shdr[4] + sym_shdr[5], sym_shdr[9]):
+            st_name, st_info, st_other, st_shndx, _st_val, _st_sz = struct.unpack_from("<IBBHQQ", buf, pos)
+            nul = strtab.find(b"\x00", st_name)
+            nm = strtab[st_name:nul].decode("utf-8", errors="replace")
+            if nm == PINNED_STD_MERGEFUNC_ALIAS:
+                struct.pack_into("<IBBHQQ", buf, pos, st_name, st_info, st_other, st_shndx, new_value, new_size)
+                return bytes(buf), st_shndx
+        raise RuntimeError("self-test setup failed: pinned alias not found in real ELF")
+
+    checks_run = 0
+
+    def expect_reject(label: str, fn: Any) -> None:
+        nonlocal checks_run
+        try:
+            fn()
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            first_line = str(exc).splitlines()[0]
+            print(f"SELFTEST PASS [REJECTED] {label}: {first_line}")
+            checks_run += 1
+            return
+        raise RuntimeError(f"SELFTEST FAIL: {label} was unexpectedly ACCEPTED")
+
+    exp_stderr = f"{STD_SYM_AUDIT_PREFIX} {PINNED_STD_MERGEFUNC_ALIAS}\n"
+    cache_tmp_root = get_cache_tmp_root()
+    with tempfile.TemporaryDirectory(dir=cache_tmp_root, prefix="cli-elf-selftest.") as tmp_str:
+        tmp = pathlib.Path(tmp_str)
+
+        # Case 1 (Positive): real ELF + fresh snapshot-link/1 link.json + exact exit=1 stderr -> ACCEPTED.
+        c1_dir = tmp / "c1"
+        c1_dir.mkdir()
+        t0 = c1_dir.stat().st_mtime_ns
+        c1_elf = c1_dir / DEFAULT_ELF_NAME
+        c1_json = c1_dir / "link.json"
+        c1_elf.write_bytes(real_elf)
+        c1_json.write_text(real_json_txt, encoding="utf-8")
+        expect_alias = accept_snapshot_link_exit(1, "", exp_stderr, ["snapshot-link"], c1_elf, c1_json, t0)
+        if not expect_alias:
+            raise RuntimeError("SELFTEST FAIL: Case 1 expect_alias was False")
+        ok = verify_std_symtab_and_block621_alias(
+            elf_bytes=real_elf,
+            elf_code=elf_code,
+            code_bin=code_bin,
+            base=base,
+            all_stubs=all_stubs,
+            repo_root=repo_root,
+            expect_alias_present=True,
+        )
+        if not ok:
+            raise RuntimeError("SELFTEST FAIL: Case 1 verify_std_symtab_and_block621_alias returned False")
+        checks_run += 1
+        print(
+            f"SELFTEST PASS [ACCEPTED] Case 1: real {DEFAULT_ELF_NAME} "
+            f"({len(real_elf)} B, sha256={hashlib.sha256(real_elf).hexdigest()[:12]}…) + fresh link.json"
+        )
+
+        _, blk621_shndx = mutate_pinned_alias_entry(real_elf, base + PINNED_BLOCK621_IMG_OFF, PINNED_BLOCK621_SIZE)
+
+        # Case 2 (Negative — A5): copy with an added `_Unwind_Backtrace` symbol -> REJECTED (both A1 and A2).
+        c2_elf_bytes = append_symtab_entry(
+            real_elf, "_Unwind_Backtrace", (1 << 4) | 2, blk621_shndx, base + 0x100, 16
+        )
+        expect_reject(
+            "Case 2a (A1: stderr includes _Unwind_Backtrace)",
+            lambda: accept_snapshot_link_exit(
+                1, "", f"{STD_SYM_AUDIT_PREFIX} _Unwind_Backtrace, {PINNED_STD_MERGEFUNC_ALIAS}\n",
+                ["snapshot-link"], c1_elf, c1_json, t0,
+            ),
+        )
+        expect_reject(
+            "Case 2b (A2: .symtab has added _Unwind_Backtrace entry)",
+            lambda: verify_std_symtab_and_block621_alias(
+                c2_elf_bytes, elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+
+        # Case 3 (Negative — A5/S1): alias moved to a different st_value or st_size -> REJECTED.
+        c3_val_elf, _ = mutate_pinned_alias_entry(
+            real_elf, base + PINNED_BLOCK621_IMG_OFF + 4, PINNED_BLOCK621_SIZE
+        )
+        c3_sz_elf, _ = mutate_pinned_alias_entry(
+            real_elf, base + PINNED_BLOCK621_IMG_OFF, PINNED_BLOCK621_SIZE - 4
+        )
+        expect_reject(
+            "Case 3a (A2/S1: alias st_value moved +4 -> thunk/non-alias)",
+            lambda: verify_std_symtab_and_block621_alias(
+                c3_val_elf, elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+        expect_reject(
+            "Case 3b (A2/S1: alias st_size changed 104 -> 100)",
+            lambda: verify_std_symtab_and_block621_alias(
+                c3_sz_elf, elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+
+        # Case 4 (Negative — A5/A1): different engine error (truncated ELF / non-audit stderr / rc=2) -> REJECTED.
+        expect_reject(
+            "Case 4a (A1: different engine stderr)",
+            lambda: accept_snapshot_link_exit(
+                1, "", "Error: cannot parse std ELF64 binary\n", ["snapshot-link"], c1_elf, c1_json, t0
+            ),
+        )
+        expect_reject(
+            "Case 4b (A1: exit code 2 even with matching stderr)",
+            lambda: accept_snapshot_link_exit(2, "", exp_stderr, ["snapshot-link"], c1_elf, c1_json, t0),
+        )
+        expect_reject(
+            "Case 4c (S3: truncated ELF binary)",
+            lambda: verify_std_symtab_and_block621_alias(
+                real_elf[:4096], elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+
+        # Case 5 (Negative — SR): second forbidden-name alias of the SAME Block 621 -> REJECTED.
+        c5_elf_bytes = append_symtab_entry(
+            real_elf,
+            "_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecNtCslhx8g8CthFc_5gimli4FakeE8grow_one",
+            (0 << 4) | 2,
+            blk621_shndx,
+            base + PINNED_BLOCK621_IMG_OFF,
+            PINNED_BLOCK621_SIZE,
+        )
+        expect_reject(
+            "Case 5 (SR/A2: second forbidden-name alias of same Block 621)",
+            lambda: verify_std_symtab_and_block621_alias(
+                c5_elf_bytes, elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+
+        # Case 6 (Negative — GK row 185 A2): duplicate entry with SAME pinned name at another address -> REJECTED.
+        c6_elf_bytes = append_symtab_entry(
+            real_elf,
+            PINNED_STD_MERGEFUNC_ALIAS,
+            (0 << 4) | 2,
+            blk621_shndx,
+            base + 0x8824C,
+            76,
+        )
+        expect_reject(
+            "Case 6 (GK row 185 A2: duplicate entry with SAME pinned name at another address)",
+            lambda: verify_std_symtab_and_block621_alias(
+                c6_elf_bytes, elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+
+        # Case 7 (Negative — GK row 185 S2): stale link.json from an earlier run (and bad schema / errors) -> REJECTED.
+        stale_dir = tmp / "c7"
+        stale_dir.mkdir()
+        stale_elf = stale_dir / DEFAULT_ELF_NAME
+        stale_json = stale_dir / "link.json"
+        stale_elf.write_bytes(real_elf)
+        stale_json.write_text(real_json_txt, encoding="utf-8")
+        stale_ns = stale_dir.stat().st_mtime_ns - 10_000_000_000
+        os.utime(stale_json, ns=(stale_ns, stale_ns))
+        later_run_ns = stale_dir.stat().st_mtime_ns
+        expect_reject(
+            "Case 7a (S2: stale link.json mtime_ns < run_started_ns)",
+            lambda: accept_snapshot_link_exit(
+                1, "", exp_stderr, ["snapshot-link"], stale_elf, stale_json, later_run_ns
+            ),
+        )
+        bad_err_dir = tmp / "c7b"
+        bad_err_dir.mkdir()
+        t7b = bad_err_dir.stat().st_mtime_ns
+        (bad_err_dir / DEFAULT_ELF_NAME).write_bytes(real_elf)
+        bad_meta = dict(real_meta)
+        bad_meta["check"] = dict(real_meta["check"], errors=["synthetic embedding mismatch"])
+        (bad_err_dir / "link.json").write_text(json.dumps(bad_meta), encoding="utf-8")
+        expect_reject(
+            "Case 7b (S2: non-empty check.errors in link.json)",
+            lambda: accept_snapshot_link_exit(
+                1, "", exp_stderr, ["snapshot-link"],
+                bad_err_dir / DEFAULT_ELF_NAME, bad_err_dir / "link.json", t7b,
+            ),
+        )
+
+        # Case 8 (Negative — S3 & S4): unexpected .dynsym section OR exit=0 with forbidden alias present -> REJECTED.
+        dynsym_buf = bytearray(real_elf)
+        e_shoff, sym_idx, sym_shdr, _str_idx, _str_shdr = locate_symtab(real_elf)
+        e_shentsize, = struct.unpack_from("<H", real_elf, 58)
+        # Mutate section 0..N copy by changing `.symtab` sh_type to SHT_DYNSYM (11) to trigger S3 `.dynsym` rejection.
+        struct.pack_into("<I", dynsym_buf, e_shoff + sym_idx * e_shentsize + 4, 11)
+        expect_reject(
+            "Case 8a (S3: .dynsym / SHT_DYNSYM section present)",
+            lambda: verify_std_symtab_and_block621_alias(
+                bytes(dynsym_buf), elf_code, code_bin, base, all_stubs, repo_root, True
+            ),
+        )
+        expect_reject(
+            "Case 8b (S4: engine exited 0 while forbidden alias present in .symtab)",
+            lambda: verify_std_symtab_and_block621_alias(
+                real_elf, elf_code, code_bin, base, all_stubs, repo_root, False
+            ),
+        )
+
+    if checks_run != 14:
+        raise RuntimeError(f"self-test invariant failed: expected 14 checks, ran {checks_run}")
+    print(
+        f"cli-elf --self-test-alias-guard: ALL {checks_run} POSITIVE/NEGATIVE CHECKS PASSED "
+        "(GK row 185 A1-A7 + SR S1-S5)"
+    )
+    return 0
+
+
+def check_determinism(
+    repo_root: pathlib.Path,
+    elf_path: pathlib.Path,
+    engine_dir: pathlib.Path,
+    explicit_engine: bool,
+    strip_override: bool | None,
+    cold_zig_cache: bool,
+) -> int:
+    if not elf_path.is_file():
+        print(f"cli-elf --check: FAIL: ELF file does not exist: {elf_path}", file=sys.stderr)
+        return 1
+
+    cache_tmp_root = get_cache_tmp_root()
+    with tempfile.TemporaryDirectory(dir=cache_tmp_root, prefix="cli-elf-check.") as chk_str:
+        chk_dir = pathlib.Path(chk_str) / "relink" / "deeper" / "path"
+        rebuilt_elf = build_into(
+            repo_root=repo_root,
+            out_dir=chk_dir,
+            engine_dir=engine_dir,
+            explicit_engine=explicit_engine,
+            strip_override=strip_override,
+            isolated_cold_zig=cold_zig_cache,
+            subdir_nesting="nested/a/b/c/relink_work",
+        )
+        b1 = elf_path.read_bytes()
+        b2 = rebuilt_elf.read_bytes()
+        if b1 != b2:
+            first_diff = next((i for i, (x, y) in enumerate(zip(b1, b2)) if x != y), min(len(b1), len(b2)))
+            print(
+                f"cli-elf --check: FAIL: non-deterministic rebuild! {elf_path} ({len(b1)} B, sha256={sha256_file(elf_path)}) "
+                f"!= {rebuilt_elf} ({len(b2)} B, sha256={sha256_file(rebuilt_elf)}) "
+                f"(first differing byte at offset {first_diff:#x})",
+                file=sys.stderr,
+            )
+            return 1
+
+        diff_bin = engine_dir / "tools" / "target" / "release" / "snapshot-fixture-diff"
+        diff_manifest = engine_dir / "tools" / "snapshot-fixture-diff" / "Cargo.toml"
+        if (diff_bin.is_file() or diff_manifest.is_file()) and elf_path.with_name("link.json").is_file():
+            env = os.environ.copy()
+            env["TMPDIR"] = chk_str
+            diff_cmd = [
+                *engine_tool_cmd(engine_dir, "snapshot-fixture-diff"),
+                str(elf_path.parent),
+                str(rebuilt_elf.parent),
+            ]
+            subprocess.run(diff_cmd, cwd=str(repo_root), check=True, env=env)
+
+        print(
+            f"cli-elf --check: OK (cmp byte-identical across 2 builds at different path depths, "
+            f"{len(b1)} bytes, sha256={sha256_file(elf_path)}, cold_zig_cache={cold_zig_cache})"
+        )
+    return 0
+
+
+def _load_optional_lock(repo_root: pathlib.Path, lock_arg: pathlib.Path | None) -> dict[str, Any]:
+    lp = (lock_arg if lock_arg is not None else (repo_root / DEFAULT_REL_LOCK)).resolve()
+    if lp.is_file():
+        return tomllib.loads(lp.read_text(encoding="utf-8"))
+    return {}
+
+
+def main(argv: list[str] | None = None) -> int:
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    eff_argv = list(sys.argv[1:] if argv is None else argv)
+    if "--stock" in eff_argv:
+        if "--snapshot" in eff_argv:
+            sys.stderr.write("cli-elf: error: --stock and --snapshot are mutually exclusive\n")
+            return 2
+        forwarded = [a for a in eff_argv if a != "--stock"]
+        return subprocess.call(
+            [sys.executable, str(repo_root / "scripts" / "cli-elf-stock"), "--stdbin", *forwarded]
+        )
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="explicit legacy D6 snapshot-mutant mode (default for scripts/cli-elf; use --stock for shipped stock build)",
+    )
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--build", action="store_true", help="build libsignal-cli.elf from source")
+    mode.add_argument(
+        "--verify-pin",
+        action="store_true",
+        help="verify libsignal-cli.elf sha256 against inputs.lock (and CliElf.lean unless --lock-only)",
+    )
+    mode.add_argument(
+        "--verify-io-manifest",
+        action="store_true",
+        help="verify generated cli/io SignalSessionIoIndex.json + SignalSessionIoPlacedObj.{lean,bin}",
+    )
+    mode.add_argument(
+        "--render-io-asm",
+        action="store_true",
+        help="deterministically render SignalSessionIoPlacedObj.{lean,bin} as AArch64 assembly (SR-48(a))",
+    )
+    mode.add_argument(
+        "--check-io-asm",
+        action="store_true",
+        help="re-render SignalSessionIoPlacedObj.{lean,bin} and require empty diff vs target .S (SR-48(a))",
+    )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="rebuild in separate deeper path, cmp, and check stubs + .img.text",
+    )
+    mode.add_argument(
+        "--self-test-alias-guard",
+        action="store_true",
+        help="run GK row 185 (A1-A7 + SR S1-S5) positive/negative self-tests on scratch copies",
+    )
+
+    ap.add_argument(
+        "--out-dir",
+        type=pathlib.Path,
+        default=None,
+        help="output dir for --build (default: .GeneratedLean/cli-elf)",
+    )
+    ap.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=None,
+        help="output .S path for --render-io-asm (stdout if omitted and not in inputs.lock)",
+    )
+    ap.add_argument("--io-asm", type=pathlib.Path, default=None, help="target .S path for --check-io-asm")
+    ap.add_argument(
+        "--pad-4b",
+        action="store_true",
+        help="append 4-byte udf #0 inside live .text.signal_session_io_all (SR-48(d))",
+    )
+    ap.add_argument("--lock", type=pathlib.Path, default=None, help="override inputs.lock path")
+    ap.add_argument("--elf", type=pathlib.Path, default=None, help="ELF path for --verify-pin / --check")
+    ap.add_argument("--lean-mod", type=pathlib.Path, default=None, help="Lean pin module for --verify-pin")
+    ap.add_argument("--lock-only", action="store_true", help="for --verify-pin: verify against inputs.lock only (skip CliElf.lean)")
+    ap.add_argument("--engine", type=pathlib.Path, default=None, help="engine directory (default: arm64-semantics)")
+    ap.add_argument(
+        "--no-strip-runtime-debug",
+        action="store_true",
+        help="dev/legacy test flag only: omit snapshot-link --strip-runtime-debug",
+    )
+    ap.add_argument(
+        "--cold-zig-cache",
+        action="store_true",
+        help="for --check: run the second build with an isolated empty ZIG_GLOBAL_CACHE_DIR",
+    )
+    ap.add_argument(
+        "--image-dir",
+        type=pathlib.Path,
+        default=None,
+        help="bug injection only, for --build (with --crate-root and --out-dir): check the link "
+        "against this rust-obj2lean export (LibsignalSessionObj.{code,data}.bin + PlacedObj) "
+        "instead of the image pinned in inputs.lock",
+    )
+    ap.add_argument(
+        "--crate-root",
+        type=pathlib.Path,
+        default=None,
+        help="bug injection only, for --build: repository root (or crate directory) holding the copy "
+        "of libsignal-session (at inputs.lock config_path) whose objects are linked",
+    )
+    args = ap.parse_args(argv)
+    if (args.image_dir is not None or args.crate_root is not None) and not (
+        args.build
+        and args.image_dir is not None
+        and args.crate_root is not None
+        and args.out_dir is not None
+    ):
+        ap.error("--image-dir and --crate-root need --build and each other and an explicit --out-dir")
+
+    tempfile.tempdir = str(get_cache_tmp_root())
+
+    explicit_engine = args.engine is not None
+    engine_dir = (args.engine if args.engine is not None else (repo_root / DEFAULT_REL_ENGINE)).resolve()
+    strip_override = False if args.no_strip_runtime_debug else None
+
+    try:
+        if args.verify_pin:
+            elf_path = (args.elf if args.elf is not None else (repo_root / DEFAULT_REL_ELF)).resolve()
+            default_lean_mod = (repo_root / DEFAULT_REL_LEAN_MOD).resolve()
+            lock_path = (args.lock if args.lock is not None else (repo_root / DEFAULT_REL_LOCK)).resolve()
+            opt_lock = _load_optional_lock(repo_root, args.lock)
+            lean_mod: pathlib.Path | None
+            if args.lock_only or (args.lean_mod is None and bool(opt_lock.get("snapshot_mutant_only"))):
+                lean_mod = None
+            elif args.lean_mod is not None:
+                lean_mod = args.lean_mod.resolve()
+            elif default_lean_mod.is_file():
+                lean_mod = default_lean_mod
+            else:
+                lean_mod = None
+            return verify_pin(elf_path, lean_mod, lock_path=lock_path)
+        if args.verify_io_manifest:
+            lock = _load_optional_lock(repo_root, args.lock)
+            verify_io_placed_manifest_and_blocks(
+                repo_root=repo_root,
+                lock=lock,
+                verify_in_elf=False,
+                verbose=True,
+            )
+            return 0
+        if args.render_io_asm:
+            lock = _load_optional_lock(repo_root, args.lock)
+            pad_arg = True if args.pad_4b else None
+            asm_txt = render_io_placed_asm(repo_root, lock, pad_4b=pad_arg)
+            out_path = args.out
+            if out_path is None and "signal_session_io_path" in lock:
+                out_path = repo_root / str(lock["signal_session_io_path"])
+            if out_path is not None:
+                out_path = out_path.resolve()
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(asm_txt, encoding="utf-8")
+                print(f"cli-elf --render-io-asm: OK -> {out_path} ({len(asm_txt.splitlines())} lines)")
+            else:
+                sys.stdout.write(asm_txt)
+            return 0
+        if args.check_io_asm:
+            lock = _load_optional_lock(repo_root, args.lock)
+            pad_arg = True if args.pad_4b else None
+            asm_txt = render_io_placed_asm(repo_root, lock, pad_4b=pad_arg)
+            target_s = args.io_asm
+            if target_s is None:
+                rel_s = lock.get("signal_session_io_path", DEFAULT_REL_IO_ASM)
+                target_s = repo_root / str(rel_s)
+            target_s = target_s.resolve()
+            if not target_s.is_file():
+                raise RuntimeError(f"SR-48(a): target IO assembly file does not exist: {target_s}")
+            disk_txt = target_s.read_text(encoding="utf-8")
+            if _strip_leading_asm_banner(disk_txt) != _strip_leading_asm_banner(asm_txt):
+                raise RuntimeError(
+                    f"SR-48(a): {target_s} differs from deterministic re-render (`./scripts/cli-elf --render-io-asm`)"
+                )
+            print(f"cli-elf --check-io-asm: OK ({target_s}: empty re-render diff, {len(asm_txt.splitlines())} lines)")
+            return 0
+        if args.self_test_alias_guard:
+            elf_path = (args.elf if args.elf is not None else (repo_root / DEFAULT_REL_ELF)).resolve()
+            return run_alias_guard_self_tests(repo_root=repo_root, elf_path=elf_path)
+        if args.build:
+            out_dir = (args.out_dir if args.out_dir is not None else (repo_root / DEFAULT_REL_OUT_DIR)).resolve()
+            if args.image_dir is not None and out_dir == (repo_root / DEFAULT_REL_OUT_DIR).resolve():
+                raise RuntimeError("--image-dir must not write the pinned .GeneratedLean/cli-elf")
+            build_into(
+                repo_root=repo_root,
+                out_dir=out_dir,
+                engine_dir=engine_dir,
+                explicit_engine=explicit_engine,
+                strip_override=strip_override,
+                image_dir=args.image_dir.resolve() if args.image_dir is not None else None,
+                crate_root=args.crate_root.resolve() if args.crate_root is not None else None,
+            )
+            return 0
+        if args.check:
+            elf_path = (args.elf if args.elf is not None else (repo_root / DEFAULT_REL_ELF)).resolve()
+            return check_determinism(
+                repo_root=repo_root,
+                elf_path=elf_path,
+                engine_dir=engine_dir,
+                explicit_engine=explicit_engine,
+                strip_override=strip_override,
+                cold_zig_cache=args.cold_zig_cache,
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"cli-elf: FAIL: {exc}", file=sys.stderr)
+        return 1
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

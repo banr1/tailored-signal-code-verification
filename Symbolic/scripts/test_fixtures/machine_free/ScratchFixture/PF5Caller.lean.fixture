@@ -1,0 +1,10 @@
+import ScratchFixture.PF5Realizer
+
+namespace ScratchFixture.PF5Caller
+
+theorem pf5_caller :
+    ScratchFixture.PF5DeniedParent.parentFn Nat.zero =
+      ScratchFixture.PF5DeniedParent.parentFn Nat.zero :=
+  ScratchFixture.PF5DeniedParent.parentFn.eq_1
+
+end ScratchFixture.PF5Caller

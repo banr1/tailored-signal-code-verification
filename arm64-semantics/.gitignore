@@ -1,0 +1,54 @@
+.lake/
+# Build output of the `arm64`, `prooflib`, `equivalence`, `formal-rfcs`, and standalone `CaseStudies/<Lib>`
+# Lake packages (`Arm64/lakefile.toml`, `ProofLib/lakefile.toml`, `Equivalence/lakefile.toml`,
+# `FormalRfcs/lakefile.lean`, `CaseStudies/*/lakefile.lean`); also matched by `.lake/` above.
+Arm64/.lake/
+Arm64/Testing/.lake/
+ProofLib/.lake/
+Equivalence/.lake/
+VerifiedLibraries/.lake/
+CaseStudies/*/.lake/
+FormalRfcs/.lake/
+build/
+__pycache__/
+*.pyc
+*.o
+*.elf
+*.bin
+# Static ELF and binary fixtures read by `elf_image%` / `include_bytes%`.
+!Arm64/Testing/Generators/AdequacyTourFixture.bin
+!Arm64/Testing/Generators/CompiledBinaryFixture.bin
+!Arm64/Testing/Regression/fixtures/*.elf
+!CaseStudies/*/Implementation/*.elf
+!CaseStudies/*/Implementation/*/*.elf
+!Arm64/Testing/ProcessE2E/bin/*.elf
+!Arm64/Testing/ElfLoaderDiff/bin/*.elf
+!Arm64/Testing/SyscallDiff/bin/*.elf
+
+# Compiler output regenerated from `<Pkg>/Implementation/` before every Lean build
+# (see `ensureRustExports` in `scripts/LakeExports.lean`).
+VerifiedLibraries/*/Generated/
+CaseStudies/*/Generated/
+FormalRfcs/*/*/Generated/
+
+# Marker written by `scripts/audit-snapshot`.
+.audit-snapshot
+
+# Cargo build output (CaseStudies/*/Implementation, VerifiedLibraries/*/Implementation, tools/)
+target/
+
+# Downloaded upstream third-party sources (`scripts/fetch-upstream-sources.sh`).
+# Only tracked third-party files (licenses, configure-generated headers, and patches)
+# under `third_party/` are committed; unpacked upstream trees and symlinks are ignored.
+third_party/**/.fetched-*
+third_party/**/.unpack-tmp/
+CaseStudies/Hashbrown/Implementation/vendor/
+third_party/musl-1.2.5/upstream/
+third_party/sail-armv9
+third_party/arm-isa-xml-2026-06
+third_party/linux-7.3
+third_party/fp-tools
+
+# Work off the structured ARM A64 XML/ASL text (`scripts/fetch-upstream-sources.sh arm-isa-xml`,
+# `tools/arm-asl-extract`), never committed PDF manuals.
+docs/*.pdf

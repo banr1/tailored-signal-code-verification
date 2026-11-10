@@ -1,0 +1,462 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.SpqrV1.Top.Send.AfterStatesFinish1Placed
+public import LibsignalBinary.Proofs.SpqrV1.Top.Send.StatesSendDispatch
+public import LibsignalBinary.Proofs.SpqrV1.Top.Send.StatesSendHeaderReceived1Placed
+import LibsignalBinary.Proofs.ConsumeMessageKey.FindIndexProofs.Loop
+import LibsignalBinary.Proofs.E2E.InMem.HashbrownBin.SessionStoreFutures.StoreCommon
+import LibsignalBinary.Proofs.E2E.Record.Serialization.SessionCloneAux.Base
+import LibsignalBinary.Proofs.SpqrV1.Kdf.HkdfToSlice
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageEncode.Base
+import LibsignalBinary.Proofs.SpqrV1.Top.Send.AfterStatesFinishPlaced
+import LibsignalBinary.Proofs.SpqrV1.Top.Send.AfterStatesVnEncode
+import LibsignalBinary.Proofs.SpqrV1.Top.Send.StatesSendHeaderReceived2
+import LibsignalBinary.Proofs.SpqrV1.Top.Send.StatesSendLeaves1Placed
+import LibsignalBinary.Proofs.SpqrV1.Top.Send.TopRegions
+import LibsignalBinary.Proofs.TripleRatchet.ReceiveRatchet.From.Callees
+import ProofLib.SepLogic.WP.Apply
+
+/-!
+# Relocatable Phase 4 Finish and `.headerReceived` Panic Path for `spqr::send` (Block 124)
+
+Verifies `step_send_finish_320a4'_placed` (`+6216 -> +4600`) and
+`step_send_arm_headerReceived_encaps1_none_placed` (`+1312 -> core::result::unwrap_failed`)
+under `[LibsignalPlacement]`.
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+set_option linter.unusedSimpArgs false
+set_option linter.unusedVariables false
+set_option linter.unusedSectionVars false
+
+namespace CryptoVerification.SpqrV1.Top.Send
+
+open Arm64 Arm64.Obj ProofLib ProofLib.ProgramReflection
+open CryptoGames.LibsignalSession (Crypto ShaCompress)
+open CryptoVerification
+open CryptoVerification.RustHeap
+open CryptoVerification.LibsignalSession
+open CryptoVerification.LibsignalSessionRepr
+open CryptoVerification.LibsignalProtoCodec
+open CryptoVerification.LibsignalTripleRatchet
+open CryptoVerification.LibsignalTripleRatchet.Getters
+open CryptoVerification.LibsignalTripleRatchetRepr
+open CryptoVerification.LibsignalSpqrV1
+open CryptoVerification.SpqrV1.Layout.L22
+open CryptoVerification.SpqrV1.Auth hiding Entails.sepExists_elim
+open CryptoVerification.SpqrV1.Kdf
+open CryptoVerification.SpqrV1.GF.UnacceleratedMul
+open CryptoVerification.SpqrV1.GF.Mul2U16
+open CryptoVerification.SpqrV1.Poly
+open CryptoVerification.SpqrV1.Poly.EncoderFromPb
+open CryptoVerification.SpqrV1.Poly.EncodeBytes
+open CryptoVerification.SpqrV1.Poly.NextChunk
+open CryptoVerification.SpqrV1.Drop
+open CryptoVerification.SpqrV1.ProtoRepr
+open CryptoVerification.SpqrV1.ProtoRepr.EncodedLen
+open CryptoVerification.SpqrV1.Prost.EncodeToVec hiding SepWP.done
+open CryptoVerification.SpqrV1.Unchunked
+open CryptoVerification.SpqrV1.States
+open CryptoVerification.SpqrV1.States.FromPb
+open CryptoVerification.SpqrV1.States.IntoPb
+open CryptoVerification.SpqrV1.States.Leaves
+open CryptoVerification.SpqrV1.Top.DecodeState
+open CryptoVerification.SpqrV1.Top.ChainFrom
+open CryptoVerification.SpqrV1.Top.ChainFromVersionNegotiation
+open CryptoVerification.SpqrV1.Top.EncodeVarint
+open CryptoVerification.SpqrV1.Top.MessageSerialize
+open CryptoVerification.SpqrV1.Alloc
+open CryptoVerification.CodeLayout
+open CryptoVerification.SpqrV1.Top.Send.Placed
+
+variable [LibsignalPlacement]
+
+private theorem send_noneCap2_add_two_beq_zero :
+    (0xfffffffffffffffe#64 + 2#64 == 0#64) = true := rfl
+
+private theorem send_noneCap2_add_two_bne_zero :
+    (0xfffffffffffffffe#64 + 2#64 != 0#64) = false := rfl
+
+attribute [local irreducible] libsignalSessionCode Program.fetch Program.externAt? Program.fnOff Program.fnAddr
+  v1StatePBPinnedAt
+attribute [-arm64_norm]
+  Kdf.HkdfToSliceProof.sp_sub_688_eq_hsp
+  Kdf.HkdfToSliceProof.sp_add_neg688_eq_hsp
+  Kdf.HkdfToSliceProof.sp_sub_96_eq_hsp_592
+  Kdf.HkdfToSliceProof.sp_add_neg96_eq_hsp_592
+  Kdf.HkdfToSliceProof.hsp_592_sub_592_eq_hsp
+  Kdf.HkdfToSliceProof.hsp_592_add_neg592_eq_hsp
+  Kdf.HkdfToSliceProof.hsp_add_688_sub_688
+  Kdf.HkdfToSliceProof.hsp_592_add_96_eq_sp
+attribute [local arm64_norm, local wp_norm] bv_sub_add_lit BitVec.sub_add_cancel BitVec.toNat_zero spqrSendPlacedEntry
+attribute [local simp, local arm64_norm] Drop.none2Cap_add_two_beq_zero Drop.noneCap_add_two_beq_zero
+  EncodedLen.noneCap_add_one_beq_zero EncodedLen.noneCap_add_one_bne_zero
+  send_noneCap2_add_two_beq_zero send_noneCap2_add_two_bne_zero
+  noneCap3_add_three_beq_zero noneCap3_add_three_bne_zero
+
+attribute [local simp, local arm64_norm, local wp_norm]
+  extractLsb_lo_append64 extractLsb_hi_append64
+  ite_zero32_self ite_zero64_self
+
+/-! ## Alignment-Free Result Construction and Epilogue (`+6216 -> +4600`) -/
+
+/-- `spqrSendPlacedEntry + 6216#64 -> spqrSendPlacedEntry + 6328#64` (28 instructions = 112 bytes),
+    without requiring `hret_align` on `ret`. -/
+theorem step_send_build_result_320a4'_placed {A : RustAlloc}
+    {ext : String → Option (State → State)} (hdealloc : DeallocOkExtPlaced A ext)
+    (s : State) (ret v_20 x21 x23 x25 x27 : BitVec 64)
+    (stBytes msgBytes : Bytes) (key : CryptoGames.HKDF.Salt) (Frame : SepProp)
+    (hmsg_len : msgBytes.length < 2 ^ 32)
+    (hpc : s.pc = spqrSendPlacedEntry + 6216#64)
+    (hrun : s.status = .Running) (hx19 : s.readReg64 .x19 = ret)
+    (hx21 : s.readReg64 .x21 = x21) (hx23 : s.readReg64 .x23 = x23)
+    (hx25 : s.readReg64 .x25 = x25) (hx27 : s.readReg64 .x27 = x27)
+    (hx28 : s.readReg64 .x28 = s.sp + 4192#64) (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 6328#64) s
+      (memRegion ret 72 ∗ vecU8 A (s.sp + 1424#64) stBytes ∗ vecU8 A (s.sp + 4080#64) msgBytes ∗
+        optMsgKeySlotsAt A s.sp key ∗ ((s.sp + 32#64) ↦₆₄ v_20) ∗
+        memRegion (s.sp + 4192#64) 48 ∗ memRegion (s.sp + 7136#64) 16 ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧ sf.trace = s.trace ∧ sf.sp = s.sp ∧
+        sf.readReg64 .x19 = v_20 ∧ sf.readReg64 .x21 = x21 ∧
+        sf.readReg64 .x23 = x23 ∧ sf.readReg64 .x25 = x25 ∧ sf.readReg64 .x27 = x27 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ spqrSendResultAt A ret (some (stBytes, key, msgBytes)) ∗
+          memRegion (s.sp + 8#64) 8 ∗ memRegion (s.sp + 24#64) 24 ∗
+          memRegion (s.sp + 1424#64) 24 ∗ memRegion (s.sp + 4080#64) 24 ∗
+          memRegion (s.sp + 4192#64) 48 ∗ memRegion (s.sp + 7136#64) 16 ∗
+          A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hdealloc_raw := spqrSend_dealloc_sub_ok_placed hdealloc
+  simp only [rustDeallocSpec] at hdealloc_raw
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdealloc_raw hpc ⊢
+  have hst_exp := vecU8_expose_words A (s.sp + 1424#64) stBytes
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at hst_exp
+  have hmsg_exp := vecU8_expose_words A (s.sp + 4080#64) msgBytes
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at hmsg_exp
+  refine SepWP.focus_weaken hst_exp (by sep_focus) ?_; wp_pull_exists; rename_i stCap stPtr
+  refine SepWP.focus_weaken hmsg_exp (by sep_focus) ?_; wp_pull_exists; rename_i msgCap msgPtr
+  wp_conv_pre =>
+    rw [memRegion_72_split_48_24 ret, memRegion_48_words6 ret,
+        memRegion_48_words6 (s.sp + 4192#64), memRegion_16_words2 (s.sp + 7136#64)]
+  simp only [BitVec.add_assoc, BitVec.reduceAdd]; wp_pull_exists
+  have hret_st := words_to_vecU8 A ret stCap stPtr stBytes
+  have hret_msg := words_to_vecU8 A (ret + 24#64) msgCap msgPtr msgBytes
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at hret_msg
+  have h1424 := words3_to_memRegion_24' (s.sp + 1424#64) stCap stPtr (BitVec.ofNat 64 stBytes.length)
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at h1424
+  have h4080 := words3_to_memRegion_24' (s.sp + 4080#64) msgCap msgPtr (BitVec.ofNat 64 msgBytes.length)
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at h4080
+  have h4192 := words6_to_memRegion_48 (s.sp + 4192#64)
+    stCap stPtr (BitVec.ofNat 64 stBytes.length) msgCap msgPtr (BitVec.ofNat 64 msgBytes.length)
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at h4192
+  have h7136 := words2_to_memRegion_16 (s.sp + 7136#64) stCap stPtr
+  simp only [BitVec.add_assoc, BitVec.reduceAdd] at h7136
+  cases key with
+  | some k =>
+    dsimp only [optMsgKeySlotsAt]; wp_pull_exists; rename_i mkCap mkPtr
+    wp_conv_pre => rw [memRegion_24_words3' (ret + 48#64)]
+    simp only [BitVec.add_assoc, BitVec.reduceAdd]; wp_pull_exists; wp_steps
+    have hret_key := optKeyAt_some_of_words A (ret + 48#64) mkCap mkPtr k
+    simp only [BitVec.add_assoc, BitVec.reduceAdd] at hret_key
+    have h8 := ProofLib.pointsTo64_entails_memRegion (s.sp + 8#64) mkPtr
+    have h24 := words3_to_memRegion_24' (s.sp + 24#64) 32#64 v_20 mkCap
+    simp only [BitVec.add_assoc, BitVec.reduceAdd] at h24
+    refine SepWP.focus_weaken hret_st (by sep_focus) ?_
+    refine SepWP.focus_weaken hret_msg (by sep_focus) ?_
+    refine SepWP.focus_weaken hret_key (by sep_focus) ?_
+    refine SepWP.focus_weaken (sendResultAt_some_of_parts A ret stBytes msgBytes (some k) hmsg_len) (by sep_focus) ?_
+    refine SepWP.focus_weaken h8 (by sep_focus) ?_
+    refine SepWP.focus_weaken h24 (by sep_focus) ?_
+    refine SepWP.focus_weaken h1424 (by sep_focus) ?_
+    refine SepWP.focus_weaken h4080 (by sep_focus) ?_
+    refine SepWP.focus_weaken h4192 (by sep_focus) ?_
+    refine SepWP.focus_weaken h7136 (by sep_focus) ?_
+    exact ProofLib.SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.of_eq (by ac_rfl)⟩
+  | none =>
+    dsimp only [optMsgKeySlotsAt]; wp_pull_exists; rename_i mkCap mkPtr
+    wp_conv_pre => rw [memRegion_24_split_8_16 (ret + 48#64)]
+    simp only [BitVec.add_assoc, BitVec.reduceAdd]; wp_pull_exists
+    refine SepWP.focus_weaken (vecU8Heap_entails_dealloc A mkCap mkPtr []) (by sep_focus) ?_
+    wp_focus_pure; intro hcap_lt
+    dsimp only [vecCapPtrDealloc] at hcap_lt ⊢
+    have hret_key := optKeyAt_none_of_word A (ret + 48#64)
+    simp only [BitVec.add_assoc, BitVec.reduceAdd] at hret_key
+    have h8 := ProofLib.pointsTo64_entails_memRegion (s.sp + 8#64) mkPtr
+    have h24 := words3_to_memRegion_24' (s.sp + 24#64) 0#64 v_20 mkCap
+    simp only [BitVec.add_assoc, BitVec.reduceAdd] at h24
+    by_cases hc0 : (mkCap == 0#64) = true <;>
+      simp only [hc0, Bool.false_eq_true, ↓reduceIte, emp_sepConj, sepConj_emp]
+    · have hc_eq : mkCap = 0#64 := by rwa [beq_iff_eq] at hc0
+      subst hc_eq; wp_steps
+      refine SepWP.focus_weaken hret_st (by sep_focus) ?_
+      refine SepWP.focus_weaken hret_msg (by sep_focus) ?_
+      refine SepWP.focus_weaken hret_key (by sep_focus) ?_
+      refine SepWP.focus_weaken (sendResultAt_some_of_parts A ret stBytes msgBytes none hmsg_len) (by sep_focus) ?_
+      refine SepWP.focus_weaken h8 (by sep_focus) ?_
+      refine SepWP.focus_weaken (words3_to_memRegion_24' (s.sp + 24#64) 0#64 v_20 0#64) (by sep_focus) ?_
+      refine SepWP.focus_weaken h1424 (by sep_focus) ?_
+      refine SepWP.focus_weaken h4080 (by sep_focus) ?_
+      refine SepWP.focus_weaken h4192 (by sep_focus) ?_
+      refine SepWP.focus_weaken h7136 (by sep_focus) ?_
+      exact ProofLib.SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.of_eq (by ac_rfl)⟩
+    · rw [send_stackAt_callee_eq_allocHook s.sp]; wp_steps
+      wp_call hdealloc_raw (mkPtr, mkCap.toNat, 1)
+      refine SepWP.focus_weaken hret_st (by sep_focus) ?_
+      refine SepWP.focus_weaken hret_msg (by sep_focus) ?_
+      refine SepWP.focus_weaken hret_key (by sep_focus) ?_
+      refine SepWP.focus_weaken (sendResultAt_some_of_parts A ret stBytes msgBytes none hmsg_len) (by sep_focus) ?_
+      refine SepWP.focus_weaken h8 (by sep_focus) ?_
+      refine SepWP.focus_weaken h24 (by sep_focus) ?_
+      refine SepWP.focus_weaken h1424 (by sep_focus) ?_
+      refine SepWP.focus_weaken h4080 (by sep_focus) ?_
+      refine SepWP.focus_weaken h4192 (by sep_focus) ?_
+      refine SepWP.focus_weaken h7136 (by sep_focus) ?_
+      exact ProofLib.SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.of_eq (by ac_rfl)⟩
+
+/-- `spqrSendPlacedEntry + 6216#64 -> spqrSendPlacedEntry + 4600#64`, without requiring `hret_align`. -/
+theorem step_send_finish_320a4'_placed {A : RustAlloc} {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkExtPlaced A ext) (s : State) (ret v_20 x21 x23 x25 x27 : BitVec 64)
+    (stBytes msgBytes : Bytes) (key : CryptoGames.HKDF.Salt) (g : PqRatchetStatePBGhost) (st : PqRatchetState)
+    (Frame : SepProp) (hcl : LibsignalCodeLoaded lsmpl s.mem)
+    (hmsg_len : msgBytes.length < 2 ^ 32)
+    (hpc : s.pc = spqrSendPlacedEntry + 6216#64) (hrun : s.status = .Running)
+    (hx19 : s.readReg64 .x19 = ret) (hx21 : s.readReg64 .x21 = x21) (hx23 : s.readReg64 .x23 = x23)
+    (hx25 : s.readReg64 .x25 = x25) (hx27 : s.readReg64 .x27 = x27) (hx28 : s.readReg64 .x28 = s.sp + 4192#64)
+    (hflag : x21 = LibsignalTripleRatchetRepr.noneCap ∨ BitVec.truncate 32 v_20 = 0#32) (hx25_ch : (x25 + 1#64 == 0#64) = !st.chain.isSome)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext) (spqrSendPlacedEntry + 4600#64) s
+      (memRegion ret 72 ∗ vecU8 A (s.sp + 1424#64) stBytes ∗ vecU8 A (s.sp + 4080#64) msgBytes ∗
+        optMsgKeySlotsAt A s.sp key ∗ ((s.sp + 32#64) ↦₆₄ v_20) ∗
+        memRegion (s.sp + 4192#64) 48 ∗ memRegion (s.sp + 7136#64) 16 ∗
+        pqRatchetStatePBPinnedAt A g (s.sp + 4704#64) st ∗
+        spqrSendDropJumpTablePlacedAt ∗ A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q => sf.status = .Running ∧ sf.trace = s.trace ∧ sf.sp = s.sp ∧ sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ spqrSendResultAt A ret (some (stBytes, key, msgBytes)) ∗
+          memRegion (s.sp + 8#64) 8 ∗ memRegion (s.sp + 24#64) 24 ∗ memRegion (s.sp + 1424#64) 24 ∗
+          memRegion (s.sp + 4080#64) 24 ∗ memRegion (s.sp + 4192#64) 48 ∗ memRegion (s.sp + 4704#64) 352 ∗
+          memRegion (s.sp + 7136#64) 16 ∗ spqrSendDropJumpTablePlacedAt ∗ A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  refine SepWP.focus_weaken (pqRatchetStatePBPinnedAt_entails_proto A g (s.sp + 4704#64) st) (by sep_focus) ?_
+  refine SepWP.weaken_pre (Entails.of_eq (by ac_rfl))
+    (sepWP_seq_lscl hcl (SepWP.mono (step_send_build_result_320a4'_placed hdealloc s ret v_20 x21 x23 x25 x27 stBytes msgBytes key
+      (Drop.protoPqRatchetStateAt A (s.sp + 4704#64) st ∗ spqrSendDropJumpTablePlacedAt ∗ Frame)
+      hmsg_len hpc hrun hx19 hx21 hx23 hx25 hx27 hx28 hsp_align) ?_))
+  intro s1 Q1 hpc1 _ ⟨hrun1, htr1, hsp1, hx19_1, hx21_1, hx23_1, hx25_1, _, hvregs1, hQ1⟩ hcl1
+  have hflag1 : s1.readReg64 .x21 = LibsignalTripleRatchetRepr.noneCap ∨ s1.readReg32 .x19 = 0#32 := by
+    rcases hflag with h21 | h20
+    · left; rw [hx21_1, h21]
+    · right; simp only [State.readReg32, hx19_1, h20]
+  refine sepWP_seq_lscl hcl1 (SepWP.mono (step_send_epoch_dealloc_32114_placed s1 x23 x25 Q1 hpc1 hrun1 hx23_1 hx25_1 hflag1) ?_)
+  intro s2 Q2 hpc2 _ ⟨hrun2, htr2, hsp2, hx23_2, hx25_2, hvregs2, hQ2⟩ hcl2
+  have hsp2_align : (s2.sp &&& 15#64 == 0#64) = true := by rwa [hsp2, hsp1]
+  have hx25_2' : (s2.readReg64 .x25 + 1#64 == 0#64) = !st.chain.isSome := by rw [hx25_2, hx25_ch]
+  have hQ2' := Entails.trans hQ2 hQ1; rw [← hsp1, ← hsp2] at hQ2'
+  refine SepWP.weaken_pre (Entails.trans hQ2' (Entails.of_eq (by ac_rfl)))
+    (SepWP.mono (step_send_drop_pq_state_32134_placed hdealloc s2 st x23
+      (spqrSendResultAt A ret (some (stBytes, key, msgBytes)) ∗
+        memRegion (s2.sp + 8#64) 8 ∗ memRegion (s2.sp + 24#64) 24 ∗
+        memRegion (s2.sp + 1424#64) 24 ∗ memRegion (s2.sp + 4080#64) 24 ∗
+        memRegion (s2.sp + 4192#64) 48 ∗ memRegion (s2.sp + 7136#64) 16 ∗ Frame)
+      hcl2 hpc2 hrun2 hsp2_align hx23_2 hx25_2') ?_)
+  intro sf Qf _ _ ⟨hrunf, htrf, hspf, hx23_f, hvregsf, hQf⟩
+  refine ⟨hrunf, htrf.trans (htr2.trans htr1), hspf.trans (hsp2.trans hsp1), hx23_f, hvregsf.trans (hvregs2.trans hvregs1), ?_⟩
+  rw [hsp2, hsp1] at hQf; exact Entails.trans hQf (Entails.of_eq (by ac_rfl))
+
+/-! ## `.headerReceived` Arm When `K.encaps1 hdr rand = none` (`+1312 -> unwrap_failed`) -/
+
+section HeaderReceivedPanicPlaced
+
+abbrev spqrUnwrapFailedSym : String :=
+  "_RNvNtCskxtBwYRO61I_4core6result13unwrap_failed"
+
+theorem spqrSend_unwrap_failed_placed {ext : String → Option (State → State)}
+    (hunwrap : (Rust.withPanics ext) spqrUnwrapFailedSym = some Rust.panicked) :
+    (spqrSendPlacedProg ext).externAt? (lsρ spqrUnwrapFailedSym) = some Rust.panicked :=
+  (spqr_externAt?_of_mem).trans hunwrap
+
+theorem step_headerReceived_1312_encaps1_none_placed
+    {K : MlKem} {A : RustAlloc} {ctl : BitVec 64}
+    {ext : String → Option (State → State)}
+    (hA : AllocContractsPlaced A ext)
+    (hZero : HookSat (Rust.withPanics ext) spqrRustAllocZeroedSym (rustAllocZeroedSpec A))
+    (hrng : HookSat (Rust.withPanics ext) rngFillName (rngFillSpec ctl))
+    (henc1 : HookSat (Rust.withPanics ext) spqrMlkemEncaps1Sym (mlkemEncaps1Spec K))
+    (hunwrap_sym : (Rust.withPanics ext) spqrUnwrapFailedSym = some Rust.panicked)
+    (g : AuthenticatorGhost) (auth : Authenticator) (epoch : BitVec 64)
+    (hdr_cap hdr_ptr : BitVec 64) (hdr : Bytes) (hhdr_lt : hdr.length < 2 ^ 63)
+    (sp cur : BitVec 64) (tape : List (BitVec 8)) (h32 : 32 ≤ tape.length)
+    (rand : List.Vector (BitVec 8) 32) (hrand_val : rand.toList = tape.take 32)
+    (hencaps : K.encaps1 hdr rand = none) (d4056 : BitVec 64)
+    {ret : BitVec 64} {s0 s : State} {P Frame R : SepProp} {P_panic : Prop} {post : State → SepProp → Prop}
+    (hp : P_panic) (hcrl : LibsignalCodeRoLoaded lsmpl s.mem) (hsp_align : (sp &&& 15#64 == 0#64) = true)
+    (hpc : s.pc = spqrSendPlacedEntry + 1312#64)
+    (hrun : s.status = .Running) (hsp : s.sp = sp) (hx24 : s.readReg64 .x24 = sp + 2384#64)
+    (hx26 : s.readReg64 .x26 = sp + 4704#64) (hx28 : s.readReg64 .x28 = sp + 4192#64)
+    (htrace : s.trace = s0.trace)
+    (hP : P = (authInlineWordsAt g (sp + 2392#64) auth ∗ authHeapBufs A g auth ∗
+      ((sp + 2440#64) ↦₆₄ hdr_cap) ∗ ((sp + 2448#64) ↦₆₄ hdr_ptr) ∗
+      ((sp + 2456#64) ↦₆₄ BitVec.ofNat 64 hdr.length) ∗ (hdr_ptr ↦ₛ hdr) ∗
+      ((sp + 2464#64) ↦₆₄ epoch) ∗ ((sp + 4056#64) ↦₆₄ d4056) ∗
+      memRegion (sp + 4192#64) 48 ∗ memRegion (sp + 4704#64) 961 ∗
+      memRegion (sp + 7136#64) 32 ∗ memRegion (sp + 7536#64) 32 ∗
+      tapeAt ctl cur tape ∗ A.pool ∗ stackAt sp spqrSendCalleeStack) ∗ Frame) :
+    SepWPp (spqrSendPlacedProg ext) ret s P post
+      (fun sf P_f => (sf.mem ⊨ P_f ∗ R) →
+        (sf.mem ⊨ (⌜(P_panic ∨ allocFailedIn s0 sf) ∧ s0.trace <+: sf.trace⌝ ∗ anyHeap) ∗ R)) := by
+  have hshim := spqrSend_shim_ok_placed hA
+  have hallocz := spqrSend_allocZeroed_ok_placed hZero
+  have hrng_call := spqrSend_rngFill_ok_placed hrng
+  have henc1_call := spqrSend_encapsulate1_ok_placed henc1
+  have haerr := spqrSend_handle_error_placed hA
+  have hunwrap := spqrSend_unwrap_failed_placed hunwrap_sym
+  have hhdr_toNat : (BitVec.ofNat 64 hdr.length).toNat = hdr.length := Nat.mod_eq_of_lt (by omega)
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc hshim hallocz hrng_call henc1_call haerr hunwrap ⊢
+  subst hP
+  refine sepWPp_bind (mid := lsρ spqrUnwrapFailedSym) (Q := fun sf _ => sf.trace = s0.trace)
+    (sepWPp_lift_allowPanic ?_) ?_
+  · apply of_sepWP_lscro (mid := lsρ spqrRustAllocZeroedSym) hcrl
+    rw [memRegion_48_eq_words6 (sp + 4192#64), memRegion_32_eq_words4 (sp + 7136#64),
+        memRegion_32_eq_words4 (sp + 7536#64)]
+    dsimp only [authInlineWordsAt]; simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+    iterate 14 (apply SepWP.exists_elim; intro _)
+    wp_steps
+    refine SepWP.fold (words4At_entails_memRegion (sp + 7136#64) _ _ _ _) (by dsimp only [words4At]; sep_focus) ?_
+    wp_apply
+    wp_conv_pre => rw [List.take_append_of_le_length h32, Nat.min_eq_left h32, ← hrand_val]
+    wp_steps; wp_apply; wp_steps
+    apply SepWP.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *]); intro hcrl1
+    refine call_rustAllocZeroed_lscro hallocz 2080 ⟨by decide, ⟨0, rfl⟩, by decide⟩
+      (s0 := s0) (ret_pc := (blkPl_124).base + 1400#64) (sp_call := sp) hcrl1
+      (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *])
+      (by simp only [State.sp, arm64_norm, *]) hsp_align
+      (by simp only [Reg.lr, arm64_norm, *]) (by simp only [arm64_norm, *])
+      (by simp only [Reg.x0, arm64_norm, *]) (by simp only [Reg.x1, arm64_norm, *]) (by sep_focus)
+      (fun sf1 hcrl_oom1 hpc1 hrun1 hsp1 _ h0_1 htr_oom1 => ?_)
+      (fun sf1 hcrl_ok1 hpc1 hrun1 hsp1 hcs1 hne0_1 h0b_1 htr_ok1 => ?_)
+    · apply of_sepWP_lscro (mid := lsρ spqrHandleErrorSym) hcrl_oom1; wp_steps
+      apply SepWP.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *]); intro _
+      exact finish_oom_panic (by simp only [wp_norm, arm64_norm, *])
+        (by simp only [wp_norm, arm64_norm, *]) (by simp only [arm64_norm, *])
+    · rcases hcs1 with ⟨hx19_1, hx20_1, hx21_1, hx22_1, hx23_1, hx24_1, hx25_1, hx26_1, hx27_1, hx28_1, hfp_1, _⟩
+      simp only [wp_norm, arm64_norm, *] at hx19_1 hx20_1 hx21_1 hx22_1 hx23_1 hx24_1 hx25_1 hx26_1 hx27_1 hx28_1 hfp_1
+      apply of_sepWP_lscro (mid := lsρ spqrRustAllocZeroedSym) hcrl_ok1
+      wp_steps; wp_apply; wp_steps
+      apply SepWP.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *]); intro hcrl2
+      refine call_rustAllocZeroed_lscro hallocz 32 ⟨by decide, ⟨0, rfl⟩, by decide⟩
+        (s0 := s0) (ret_pc := (blkPl_124).base + 1424#64) (sp_call := sp) hcrl2
+        (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *])
+        (by simp only [State.sp, arm64_norm, *]) hsp_align
+        (by simp only [Reg.lr, arm64_norm, *]) (by simp only [arm64_norm, *])
+        (by simp only [Reg.x0, arm64_norm, *]) (by simp only [Reg.x1, arm64_norm, *]) (by sep_focus)
+        (fun sf2 hcrl_oom2 hpc2 hrun2 hsp2 _ h0_2 htr_oom2 => ?_)
+        (fun sf2 hcrl_ok2 hpc2 hrun2 hsp2 hcs2 hne0_2 h0b_2 htr_ok2 => ?_)
+      · apply of_sepWP_lscro (mid := lsρ spqrHandleErrorSym) hcrl_oom2; wp_steps
+        apply SepWP.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *]); intro _
+        exact finish_oom_panic (by simp only [wp_norm, arm64_norm, *])
+          (by simp only [wp_norm, arm64_norm, *]) (by simp only [arm64_norm, *])
+      · rcases hcs2 with ⟨hx19_2, hx20_2, hx21_2, hx22_2, hx23_2, hx24_2, hx25_2, hx26_2, hx27_2, hx28_2, hfp_2, _⟩
+        simp only [wp_norm, arm64_norm, *] at hx19_2 hx20_2 hx21_2 hx22_2 hx23_2 hx24_2 hx25_2 hx26_2 hx27_2 hx28_2 hfp_2
+        apply of_sepWP_lscro (mid := lsρ spqrUnwrapFailedSym) hcrl_ok2
+        obtain ⟨rw0, rw1, rw2, rw3, hrand_words⟩ :=
+          exists_words4_of_len32 rand.toList (List.Vector.toList_length rand)
+        wp_conv_pre => rw [hrand_words (sp + 7136#64)]; dsimp only [words4At]
+        wp_steps
+        have hfold_rand_7536 : words4At (sp + 7536#64) rw0 rw1 rw2 rw3 ⊢ ((sp + 7536#64) ↦ₛ rand.toList) := by
+          rw [hrand_words (sp + 7536#64)]; exact Entails.refl _
+        refine SepWP.fold hfold_rand_7536 (by dsimp only [words4At]; sep_focus) ?_
+        refine SepWP.fold (stackAt_spqrSendCallee_to_extHook sp) (by sep_focus) ?_
+        wp_apply
+        wp_conv_pre => simp only [hencaps, sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc]
+        apply SepWP.exists_elim; intro _
+        refine SepWP.fold (stackAt_spqrSendCallee_from_extHook sp) (by simp only [hsp2]; sep_focus) ?_
+        have h7536 : ((sp + 7536#64) ↦ₛ rand.toList) ⊢ memRegion (sp + 7536#64) 32 := by
+          have h := pointsToBytes_entails_memRegion (sp + 7536#64) rand.toList
+          rwa [List.Vector.toList_length] at h
+        refine SepWP.fold h7536 (by sep_focus) ?_
+        rw [ProofLib.memRegion_split' (b := sp + 7536#64) (n := 1) (k := 31) (b' := sp + 7537#64)
+              rfl (by rw [BitVec.add_assoc]; rfl) (by decide), ProofLib.memRegion_one (sp + 7536#64)]
+        simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+        apply SepWP.exists_elim; intro _; wp_steps
+        apply SepWP.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *]); intro _
+        exact SepWPp.done (by wp_norm_goal) (by simp only [wp_norm, arm64_norm, *])
+          (by simp only [wp_norm, arm64_norm, *])
+  · intro sm Pm hpc_sm hrun_sm htr_sm
+    exact finish_model_panic hp (by rw [hpc_sm]; exact hunwrap) hrun_sm htr_sm
+
+/-- Wrapper around `step_headerReceived_1312_encaps1_none_placed` starting from
+    `chunkedStatesAt A (sp + 0x950#64) (.headerReceived st)` and `statesSendPreArmScratch sp`. -/
+theorem step_send_arm_headerReceived_encaps1_none_placed {F : ShaCompress} {K : MlKem}
+    {A : RustAlloc} {ctl : BitVec 64} {ext : String → Option (State → State)}
+    (hA : AllocContractsPlaced A ext)
+    (hZero : HookSat (Rust.withPanics ext) spqrRustAllocZeroedSym (rustAllocZeroedSpec A))
+    (hrng : HookSat (Rust.withPanics ext) rngFillName (rngFillSpec ctl))
+    (henc1 : HookSat (Rust.withPanics ext) spqrMlkemEncaps1Sym (mlkemEncaps1Spec K))
+    (hunwrap_sym : (Rust.withPanics ext) spqrUnwrapFailedSym = some Rust.panicked)
+    {s0 s : State} (sp cur : BitVec 64) (tape : Bytes) (h32 : 32 ≤ tape.length)
+    (st : Chunked.SendCt.HeaderReceived spqrPolyApi (spqrAuthApi F))
+    (hencaps : K.encaps1 st.uc.hdr ⟨tape.take 32, by rw [List.length_take]; omega⟩ = none)
+    {ret : BitVec 64} {P Frame R : SepProp} {P_panic : Prop} {post : State → SepProp → Prop}
+    (hp : P_panic) (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hpc : s.pc = spqrSendPlacedEntry + 1312#64)
+    (hrun : s.status = .Running) (hsp : s.sp = sp) (hsp_align : (sp &&& 15#64 == 0#64) = true)
+    (htr : s.trace = s0.trace) (hx24 : s.readReg64 .x24 = sp + 0x950#64)
+    (hx26 : s.readReg64 .x26 = sp + 0x1260#64) (hx28 : s.readReg64 .x28 = sp + 0x1060#64)
+    (hP : P = (stackAt sp spqrSendCalleeStack ∗ A.pool ∗ tapeAt ctl cur tape ∗
+      chunkedStatesAt A (sp + 0x950#64) (.headerReceived st) ∗ statesSendPreArmScratch sp) ∗ Frame) :
+    SepWPp (spqrSendPlacedProg ext) ret s P post
+      (fun sf P_f => (sf.mem ⊨ P_f ∗ R) →
+        (sf.mem ⊨ (⌜(P_panic ∨ allocFailedIn s0 sf) ∧ s0.trace <+: sf.trace⌝ ∗ anyHeap) ∗ R)) := by
+  let rand : List.Vector (BitVec 8) 32 := ⟨tape.take 32, by rw [List.length_take]; omega⟩
+  subst hP; unfold statesSendPreArmScratch
+  apply of_sepWP_lscro (mid := spqrSendPlacedEntry + 1312#64) hcrl
+  refine SepWP.fold (chunkedStatesAt_headerReceived_expose sp st) (by sep_focus) ?_
+  rw [ProofLib.memRegion_eight (sp + 4056#64),
+      ProofLib.memRegion_split' (b := sp + 4192#64) (n := 48) (k := 456) (b' := sp + 4240#64) rfl (by rw [BitVec.add_assoc]; rfl) (by decide),
+      ProofLib.memRegion_split' (b := sp + 0x1260#64) (n := 961) (k := 1439) (b' := sp + 5665#64) rfl (by rw [BitVec.add_assoc]; rfl) (by decide),
+      ProofLib.memRegion_split' (b := sp + 7136#64) (n := 32) (k := 368) (b' := sp + 7168#64) rfl (by rw [BitVec.add_assoc]; rfl) (by decide),
+      ProofLib.memRegion_split' (b := sp + 7536#64) (n := 32) (k := 368) (b' := sp + 7568#64) rfl (by rw [BitVec.add_assoc]; rfl) (by decide),
+      show (sp + 0x1260#64 : BitVec 64) = sp + 4704#64 from rfl]
+  simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+  apply SepWP.exists_elim; intro d4056; apply SepWP.exists_elim; intro g
+  apply SepWP.exists_elim; intro hdr_cap; apply SepWP.exists_elim; intro hdr_ptr
+  refine SepWP.fold (Entails.refl ⌜st.uc.hdr.length < 2 ^ 63⌝) (by sep_focus) ?_
+  refine SepWP.pure_elim fun hhdr_lt => ?_
+  apply SepWP.done hpc hrun; intro hcrl0
+  exact step_headerReceived_1312_encaps1_none_placed hA hZero hrng henc1 hunwrap_sym g st.uc.auth st.uc.epoch
+    hdr_cap hdr_ptr st.uc.hdr hhdr_lt sp cur tape h32 rand rfl hencaps d4056
+    (Frame := memRegion (sp + 32#64) 16 ∗ memRegion (sp + 3552#64) 504 ∗
+      memRegion (sp + 4064#64) 16 ∗ memRegion (sp + 4080#64) 104 ∗
+      memRegion (sp + 4240#64) 456 ∗ memRegion (sp + 5665#64) 1439 ∗
+      memRegion (sp + 7104#64) 24 ∗ memRegion (sp + 7168#64) 368 ∗
+      memRegion (sp + 7568#64) 368 ∗ ((sp + 0x950#64) ↦₆₄ 8#64) ∗
+      polyDecoderAt A (sp + 2472#64) st.receiving_ek ∗
+      memRegion (sp + 2872#64) 440 ∗ vecU8Rest A hdr_cap hdr_ptr st.uc.hdr ∗ Frame)
+    hp hcrl0 hsp_align hpc hrun hsp hx24 hx26 hx28 htr (by ac_rfl)
+
+end HeaderReceivedPanicPlaced
+
+end CryptoVerification.SpqrV1.Top.Send

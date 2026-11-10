@@ -1,0 +1,8 @@
+import Std.Tactic.BVDecide
+
+namespace ScratchFixture.P8BvDecide
+
+theorem p8_bvd_lemma (x y : BitVec 64) : (x ^^^ y) ^^^ y = x := by
+  bv_decide
+
+end ScratchFixture.P8BvDecide

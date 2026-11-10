@@ -1,0 +1,901 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.Cli.E2E.Pqxdh.ResponderClosure.Kits.StageP2Defs
+import GeneratedLean.LibsignalSessionCode -- shake: keep
+import LibsignalBinary.Proofs.E2E.InMem.HashbrownBin.IdentityKeyStoreFutures.SaveIdentity
+import LibsignalBinary.Proofs.E2E.InMem.HashbrownBin.SessionStoreFutures.StoreCommon
+import LibsignalBinary.Proofs.E2E.Record.Serialization.SessionCloneAux.Base
+import LibsignalBinary.Proofs.SpqrV1.Poly.EncoderFromPb.Defs
+import LibsignalBinary.Proofs.SpqrV1.Poly.EncoderIntoPb.Defs
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageEncode.Base
+import LibsignalBinary.Proofs.TripleRatchet.GeneralizeEntry
+import LibsignalBinary.Proofs.TripleRatchet.ReceiveRatchet.From.Step244
+
+/-!
+# Stage P2 Basic Blocks — Substage P2.5
+
+Frame-pointer-generalized, `kpBoxSize`-generic `SepWP` basic-block lemmas on
+`tripleRatchetProgAtExt b ext` for Substage P2.5 (`+0x36ac → initialize_bob_session` at `+0x1258`).
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+
+namespace CryptoVerification.Cli.E2E.Pqxdh.ResponderClosure.Kits
+
+open Arm64 ProofLib ProofLib.ProgramReflection
+open CryptoGames CryptoGames.LibsignalSession
+open CryptoVerification CryptoVerification.RustHeap
+open CryptoVerification.LibsignalSession CryptoVerification.LibsignalSessionRepr
+open CryptoVerification.LibsignalTripleRatchet CryptoVerification.LibsignalTripleRatchetRepr
+open CryptoVerification.E2E.Pqxdh.ResponderClosure
+open CryptoVerification.Cli.E2E.Pqxdh.ResponderClosure
+
+set_option maxRecDepth 200000
+
+attribute [local irreducible] Program.fetch Program.externAt? Program.fnOff
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+
+ls_attribute [local simp, local arm64_norm ↓, local wp_norm ↓]
+  (ls_lemma% fnOff "libsignal_protocol::session_management::message_decrypt_prekey::<libsignal_cli_handshake::Coins>::{closure#0}")
+  (ls_stub% "__rustc::__rust_no_alloc_shim_is_unstable_v2")
+  (ls_stub% "__rustc::__rust_alloc")
+  (ls_stub% "__rustc::__rust_dealloc")
+  (ls_stub% "memcpy")
+
+/-! ## Substage P2.5 Basic Blocks (`+0x36ac -> initialize_bob_session`) -/
+
+set_option maxHeartbeats 800000 in
+theorem p2_seg5a_ext_wp (b : BitVec 64) (ext : String → Option (State → State))
+    (s : State) (coroPtr ctxPtr idKpFutPtr idKpFutVt idKpPollAddr u_4f8 u_500 : BitVec 64)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x36ac#64)
+    (hrun : s.status = .Running)
+    (hx0 : s.readReg64 .x0 = idKpFutPtr)
+    (hx1 : s.readReg64 .x1 = idKpFutVt)
+    (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx27 : s.readReg64 .x27 = ctxPtr) :
+    SepWP (tripleRatchetProgAtExt b ext) idKpPollAddr s
+      (((coroPtr + 0x4f8#64) ↦₆₄ u_4f8) ∗
+       ((coroPtr + 0x500#64) ↦₆₄ u_500) ∗
+       ((idKpFutVt + 0x18#64) ↦₆₄ᵣ idKpPollAddr))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((coroPtr + 0x4f8#64) ↦₆₄ idKpFutPtr) ∗
+          ((coroPtr + 0x500#64) ↦₆₄ idKpFutVt) ∗
+          ((idKpFutVt + 0x18#64) ↦₆₄ᵣ idKpPollAddr)) ∧
+        s1.sp = s.sp ∧
+        s1.trace = s.trace ∧
+        s1.readReg64 .x0 = idKpFutPtr ∧
+        s1.readReg64 .x1 = ctxPtr ∧
+        s1.readReg64 .x8 = s.sp + 0x3e0#64 ∧
+        s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x21 = s.readReg64 .x21 ∧
+        s1.readReg64 .x23 = s.readReg64 .x23 ∧
+        s1.readReg64 .x24 = s.readReg64 .x24 ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧
+        s1.readReg64 .x26 = s.readReg64 .x26 ∧
+        s1.readReg64 .x27 = ctxPtr ∧
+        s1.readReg64 .x28 = s.readReg64 .x28 ∧
+        s1.readReg64 .x29 = s.readReg64 .x29 ∧
+        s1.readReg64 .x30 =
+          (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x7bc#64 ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x36ac 0x36b4
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x7ac 0x7b8
+  dsimp only [tripleRatchetProgAtExt] at hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx0' : s.readReg64 (Reg.gpr 0#5) = idKpFutPtr := hx0
+  have hx1' : s.readReg64 (Reg.gpr 1#5) = idKpFutVt := hx1
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx27' : s.readReg64 (Reg.gpr 27#5) = ctxPtr := hx27
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨Entails.of_eq (by ac_rfl), rfl, rfl,
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+
+set_option maxHeartbeats 1000000 in
+theorem p2_seg5b_fp_ext_wp (b : BitVec 64) (ext : String → Option (State → State))
+    (s : State) (coroPtr msgPtr ctxPtr idKpFutPtr idKpFutVt idKpDropAddr fp
+    v_98 v_a0 v_b0 u_98 u_a0 u_a8 u_b0 u_b8 u_c0 u_d0 u_fp80 : BitVec 64)
+    (opkId : BitVec 32)
+    (b0 b1 b2 b3 b4 b5 b6 b63
+     s0 s1_b s2 s3 s4 s5 s6 b_fp78 : BitVec 8)
+    (w0 w1 w2 w3 w4 w5 w6 : BitVec 64)
+    (hdrop_nz : idKpDropAddr ≠ 0#64)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x7bc#64)
+    (hrun : s.status = .Running)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true)
+    (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx21 : s.readReg64 .x21 = v_b0)
+    (hx23 : s.readReg64 .x23 = v_a0)
+    (hx24 : s.readReg64 .x24 = s.sp + 0x370#64)
+    (hx26 : s.readReg64 .x26 = v_98)
+    (hx27 : s.readReg64 .x27 = ctxPtr)
+    (hx29 : s.readReg64 .x29 = fp) :
+    SepWP (tripleRatchetProgAtExt b ext) idKpDropAddr s
+      (((s.sp + 0x3e0#64) ↦₈ 0#8) ∗
+       keyPair64UnalignedAt (s.sp + 0x3e1#64) b0 b1 b2 b3 b4 b5 b6 w0 w1 w2 w3 w4 w5 w6 b63 ∗
+       bytes7At (s.sp + 0x3c8#64) s0 s1_b s2 s3 s4 s5 s6 ∗
+       ((fp + 0xffffffffffffff80#64) ↦₆₄ u_fp80) ∗
+       ((fp + 0xffffffffffffff88#64) ↦₈ b_fp78) ∗
+       ((s.sp + 0x98#64) ↦₆₄ u_98) ∗
+       ((s.sp + 0xa0#64) ↦₆₄ u_a0) ∗
+       ((s.sp + 0xa8#64) ↦₆₄ u_a8) ∗
+       ((s.sp + 0xb0#64) ↦₆₄ u_b0) ∗
+       ((s.sp + 0xb8#64) ↦₆₄ u_b8) ∗
+       ((s.sp + 0xc0#64) ↦₆₄ u_c0) ∗
+       ((s.sp + 0xd0#64) ↦₆₄ u_d0) ∗
+       ((coroPtr + 0x4f8#64) ↦₆₄ idKpFutPtr) ∗
+       ((coroPtr + 0x500#64) ↦₆₄ idKpFutVt) ∗
+       ((msgPtr + 0x7c#64) ↦₃₂ opkId) ∗
+       ((idKpFutVt + 0x0#64) ↦₆₄ᵣ idKpDropAddr))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((s.sp + 0x3e0#64) ↦₈ 0#8) ∗
+          keyPair64UnalignedAt (s.sp + 0x3e1#64) b0 b1 b2 b3 b4 b5 b6 w0 w1 w2 w3 w4 w5 w6 b63 ∗
+          bytes7At (s.sp + 0x3c8#64) b0 b1 b2 b3 b4 b5 b6 ∗
+          ((fp + 0xffffffffffffff80#64) ↦₆₄ w6) ∗
+          ((fp + 0xffffffffffffff88#64) ↦₈ b63) ∗
+          ((s.sp + 0x98#64) ↦₆₄ v_98) ∗
+          ((s.sp + 0xa0#64) ↦₆₄ v_a0) ∗
+          ((s.sp + 0xa8#64) ↦₆₄ w4) ∗
+          ((s.sp + 0xb0#64) ↦₆₄ v_b0) ∗
+          ((s.sp + 0xb8#64) ↦₆₄ w2) ∗
+          ((s.sp + 0xc0#64) ↦₆₄ ctxPtr) ∗
+          ((s.sp + 0xd0#64) ↦₆₄ w3) ∗
+          ((coroPtr + 0x4f8#64) ↦₆₄ idKpFutPtr) ∗
+          ((coroPtr + 0x500#64) ↦₆₄ idKpFutVt) ∗
+          ((msgPtr + 0x7c#64) ↦₃₂ opkId) ∗
+          ((idKpFutVt + 0x0#64) ↦₆₄ᵣ idKpDropAddr)) ∧
+        s1.sp = s.sp ∧
+        s1.trace = s.trace ∧
+        s1.readReg64 .x0 = idKpFutPtr ∧
+        s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x20 = w0 ∧
+        s1.readReg64 .x21 = idKpFutPtr ∧
+        s1.readReg64 .x22 = 0#64 ∧
+        s1.readReg64 .x23 = w1 ∧
+        s1.readReg64 .x24 = idKpFutVt ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧
+        s1.readReg64 .x26 = v_98 ∧
+        s1.readReg64 .x27 = w5 ∧
+        s1.readReg64 .x28 = s.readReg64 .x28 ∧
+        s1.readReg64 .x29 = fp ∧
+        s1.readReg64 .x30 =
+          (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0xac4#64 ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  have hdrop_beq : (idKpDropAddr == 0#64) = false := beq_eq_false_iff_ne.mpr hdrop_nz
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x7bc 0x7c4
+  closure_fetches_range_cli b (Rust.withPanics ext) 0xa60 0xac0
+  dsimp only [tripleRatchetProgAtExt] at hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx21' : s.readReg64 (Reg.gpr 21#5) = v_b0 := hx21
+  have hx23' : s.readReg64 (Reg.gpr 23#5) = v_a0 := hx23
+  have hx24' : s.readReg64 (Reg.gpr 24#5) = s.sp + 0x370#64 := hx24
+  have hx26' : s.readReg64 (Reg.gpr 26#5) = v_98 := hx26
+  have hx27' : s.readReg64 (Reg.gpr 27#5) = ctxPtr := hx27
+  have hx29' : s.readReg64 (Reg.gpr 29#5) = fp := hx29
+  dsimp only [keyPair64UnalignedAt, bytes7At]
+  conv =>
+    arg 4
+    simp (config := { maxSteps := 1000000 }) only [
+      BitVec.add_assoc, BitVec.reduceAdd, sepConj_assoc]
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨?_, rfl, rfl,
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+  simp only [BitVec.add_assoc, BitVec.reduceAdd]
+  exact Entails.of_eq (by ac_rfl)
+set_option maxHeartbeats 1000000 in
+/-- Segment P2.5c1 (`+0xac4 -> +0x114c`, generic `kpBoxSize`, `StageP2ClosureHooks`):
+Frees `idKpFutPtr` (`kpBoxSize` bytes, align `8`) via `__rust_dealloc` on `Ok`, copies the
+first 55 bytes (`b0..b6` and `w0..w5`) of `IdentityKeyPair` into `coroPtr + 0x798..0x7ce`,
+loads `w8 = b63` and `x9 = w6` from `fp - 0x78` and `fp - 0x80`, and stops at `+0x114c`. -/
+theorem p2_seg5c1_fp_gen_hooks_wp {A : RustAlloc} (b : BitVec 64)
+    (ext : String → Option (State → State))
+    (hH : StageP2ClosureHooks A b ext)
+    (s : State) (coroPtr msgPtr remoteAddrPtr localAddrPtr idKpFutPtr idKpFutVt fp
+    kyberPreKeyId64 w0 w1 w2 w3 w4 w5 w6
+    cw0 cw1 cw2 cw3 cw4 cw5 : BitVec 64)
+    (opkId : BitVec 32)
+    (b0 b1 b2 b3 b4 b5 b6 b63
+     c0 c1 c2 c3 c4 c5 c6 : BitVec 8)
+    (kpBoxSize : Nat)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0xac4#64)
+    (hrun : s.status = .Running)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true)
+    (hbs_nz : BitVec.ofNat 64 kpBoxSize ≠ 0#64)
+    (hbs_lt : kpBoxSize < 2 ^ 64)
+    (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx20 : s.readReg64 .x20 = w0)
+    (hx21 : s.readReg64 .x21 = idKpFutPtr)
+    (hx22 : s.readReg64 .x22 = 0#64)
+    (hx23 : s.readReg64 .x23 = w1)
+    (hx24 : s.readReg64 .x24 = idKpFutVt)
+    (hx27 : s.readReg64 .x27 = w5)
+    (hx29 : s.readReg64 .x29 = fp) :
+    SepWP (tripleRatchetProgAtExt b ext)
+      ((tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x114c#64) s
+      (((idKpFutVt + 0x8#64) ↦₆₄ᵣ BitVec.ofNat 64 kpBoxSize) ∗
+       ((idKpFutVt + 0x10#64) ↦₆₄ᵣ 8#64) ∗
+       A.live idKpFutPtr kpBoxSize 8 ∗
+       memRegion idKpFutPtr kpBoxSize ∗
+       A.pool ∗
+       stackAt s.sp allocHookStack ∗
+       bytes7At (s.sp + 0x3c8#64) b0 b1 b2 b3 b4 b5 b6 ∗
+       bytes7At (coroPtr + 0x798#64) c0 c1 c2 c3 c4 c5 c6 ∗
+       ((coroPtr + 0x79f#64) ↦₆₄ cw0) ∗
+       ((coroPtr + 0x7a7#64) ↦₆₄ cw1) ∗
+       ((coroPtr + 0x7af#64) ↦₆₄ cw2) ∗
+       ((coroPtr + 0x7b7#64) ↦₆₄ cw3) ∗
+       ((coroPtr + 0x7bf#64) ↦₆₄ cw4) ∗
+       ((coroPtr + 0x7c7#64) ↦₆₄ cw5) ∗
+       ((s.sp + 0x98#64) ↦₆₄ (coroPtr + 0x398#64)) ∗
+       ((s.sp + 0xa8#64) ↦₆₄ w4) ∗
+       ((s.sp + 0xb8#64) ↦₆₄ w2) ∗
+       ((s.sp + 0xd0#64) ↦₆₄ w3) ∗
+       ((fp + 0xffffffffffffff80#64) ↦₆₄ w6) ∗
+       ((fp + 0xffffffffffffff88#64) ↦₈ b63) ∗
+       ((coroPtr + 0x470#64) ↦₆₄ remoteAddrPtr) ∗
+       ((coroPtr + 0x478#64) ↦₆₄ localAddrPtr) ∗
+       ((coroPtr + 0x488#64) ↦₆₄ kyberPreKeyId64) ∗
+       ((msgPtr + 0x7c#64) ↦₃₂ opkId))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((idKpFutVt + 0x8#64) ↦₆₄ᵣ BitVec.ofNat 64 kpBoxSize) ∗
+          ((idKpFutVt + 0x10#64) ↦₆₄ᵣ 8#64) ∗
+          A.pool ∗
+          stackAt s.sp allocHookStack ∗
+          bytes7At (s.sp + 0x3c8#64) b0 b1 b2 b3 b4 b5 b6 ∗
+          bytes7At (coroPtr + 0x798#64) b0 b1 b2 b3 b4 b5 b6 ∗
+          ((coroPtr + 0x79f#64) ↦₆₄ w0) ∗
+          ((coroPtr + 0x7a7#64) ↦₆₄ w1) ∗
+          ((coroPtr + 0x7af#64) ↦₆₄ w2) ∗
+          ((coroPtr + 0x7b7#64) ↦₆₄ w3) ∗
+          ((coroPtr + 0x7bf#64) ↦₆₄ w4) ∗
+          ((coroPtr + 0x7c7#64) ↦₆₄ w5) ∗
+          ((s.sp + 0x98#64) ↦₆₄ (coroPtr + 0x398#64)) ∗
+          ((s.sp + 0xa8#64) ↦₆₄ w4) ∗
+          ((s.sp + 0xb8#64) ↦₆₄ w2) ∗
+          ((s.sp + 0xd0#64) ↦₆₄ w3) ∗
+          ((fp + 0xffffffffffffff80#64) ↦₆₄ w6) ∗
+          ((fp + 0xffffffffffffff88#64) ↦₈ b63) ∗
+          ((coroPtr + 0x470#64) ↦₆₄ remoteAddrPtr) ∗
+          ((coroPtr + 0x478#64) ↦₆₄ localAddrPtr) ∗
+          ((coroPtr + 0x488#64) ↦₆₄ kyberPreKeyId64) ∗
+          ((msgPtr + 0x7c#64) ↦₃₂ opkId)) ∧
+        s1.sp = s.sp ∧
+        s1.trace = s.trace ∧
+        s1.readReg64 .x0 = coroPtr + 0x798#64 ∧
+        s1.readReg64 .x1 = localAddrPtr ∧
+        s1.readReg64 .x3 = remoteAddrPtr ∧
+        s1.readReg64 .x8 = b63.zeroExtend 64 ∧
+        s1.readReg64 .x9 = w6 ∧
+        s1.readReg64 .x10 = coroPtr + 0x798#64 ∧
+        s1.readReg64 .x11 = coroPtr + 0x7cf#64 ∧
+        s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x21 = kyberPreKeyId64 ∧
+        s1.readReg64 .x22 = s.sp + 0x370#64 ∧
+        s1.readReg64 .x23 = s.sp + 0x930#64 ∧
+        s1.readReg64 .x24 = coroPtr + 0x398#64 ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧
+        s1.readReg64 .x26 = s.readReg64 .x26 ∧
+        s1.readReg64 .x27 = w5 ∧
+        s1.readReg64 .x28 = s.readReg64 .x28 ∧
+        s1.readReg64 .x29 = fp ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  have hdealloc := hH.dealloc
+  have hbs_beq : (BitVec.ofNat 64 kpBoxSize == 0#64) = false := beq_eq_false_iff_ne.mpr hbs_nz
+  have hbs_toNat : (BitVec.ofNat 64 kpBoxSize).toNat = kpBoxSize := Nat.mod_eq_of_lt hbs_lt
+  closure_fetches_range_cli b (Rust.withPanics ext) 0xac4 0xad8
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x10e8 0x1148
+  dsimp only [tripleRatchetProgAtExt] at hdealloc hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx20' : s.readReg64 (Reg.gpr 20#5) = w0 := hx20
+  have hx21' : s.readReg64 (Reg.gpr 21#5) = idKpFutPtr := hx21
+  have hx22' : s.readReg64 (Reg.gpr 22#5) = 0#64 := hx22
+  have hx23' : s.readReg64 (Reg.gpr 23#5) = w1 := hx23
+  have hx24' : s.readReg64 (Reg.gpr 24#5) = idKpFutVt := hx24
+  have hx27' : s.readReg64 (Reg.gpr 27#5) = w5 := hx27
+  have hx29' : s.readReg64 (Reg.gpr 29#5) = fp := hx29
+  dsimp only [bytes7At]
+  conv =>
+    arg 4
+    simp (config := { maxSteps := 1000000 }) only [
+      BitVec.add_assoc, BitVec.reduceAdd, sepConj_assoc]
+  wp_steps
+  wp_call hdealloc (idKpFutPtr, kpBoxSize, 8)
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨?_, by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+  have hfp80 : fp - 128#64 = fp + 0xffffffffffffff80#64 := by bv_omega
+  have hfp78 : fp - 120#64 = fp + 0xffffffffffffff88#64 := by bv_omega
+  simp only [hfp80, hfp78, BitVec.add_assoc, BitVec.reduceAdd]
+  exact Entails.of_eq (by ac_rfl)
+
+abbrev p2_seg5c1_fp_gen_4k_wp := @p2_seg5c1_fp_gen_hooks_wp
+
+/-- Segment P2.5c1 (`+0xac4 -> +0x114c`, generic `kpBoxSize`, 0-stack `AllocContracts`). -/
+theorem p2_seg5c1_fp_gen_wp {A : RustAlloc} (b : BitVec 64)
+    (ext : String → Option (State → State))
+    (hA : AllocContracts b A ext) :
+    ∀ (s : State) (coroPtr msgPtr remoteAddrPtr localAddrPtr idKpFutPtr idKpFutVt fp
+      kyberPreKeyId64 w0 w1 w2 w3 w4 w5 w6
+      cw0 cw1 cw2 cw3 cw4 cw5 : BitVec 64)
+      (opkId : BitVec 32)
+      (b0 b1 b2 b3 b4 b5 b6 b63
+       c0 c1 c2 c3 c4 c5 c6 : BitVec 8)
+      (kpBoxSize : Nat),
+      s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0xac4#64 →
+      s.status = .Running →
+      (s.sp &&& 15#64 == 0#64) = true →
+      BitVec.ofNat 64 kpBoxSize ≠ 0#64 →
+      kpBoxSize < 2 ^ 64 →
+      s.readReg64 .x19 = coroPtr →
+      s.readReg64 .x20 = w0 →
+      s.readReg64 .x21 = idKpFutPtr →
+      s.readReg64 .x22 = 0#64 →
+      s.readReg64 .x23 = w1 →
+      s.readReg64 .x24 = idKpFutVt →
+      s.readReg64 .x27 = w5 →
+      s.readReg64 .x29 = fp →
+      SepWP (tripleRatchetProgAtExt b ext)
+        ((tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x114c#64) s
+        (((idKpFutVt + 0x8#64) ↦₆₄ᵣ BitVec.ofNat 64 kpBoxSize) ∗
+         ((idKpFutVt + 0x10#64) ↦₆₄ᵣ 8#64) ∗
+         A.live idKpFutPtr kpBoxSize 8 ∗
+         memRegion idKpFutPtr kpBoxSize ∗
+         A.pool ∗
+         stackAt s.sp allocHookStack ∗
+         bytes7At (s.sp + 0x3c8#64) b0 b1 b2 b3 b4 b5 b6 ∗
+         bytes7At (coroPtr + 0x798#64) c0 c1 c2 c3 c4 c5 c6 ∗
+         ((coroPtr + 0x79f#64) ↦₆₄ cw0) ∗
+         ((coroPtr + 0x7a7#64) ↦₆₄ cw1) ∗
+         ((coroPtr + 0x7af#64) ↦₆₄ cw2) ∗
+         ((coroPtr + 0x7b7#64) ↦₆₄ cw3) ∗
+         ((coroPtr + 0x7bf#64) ↦₆₄ cw4) ∗
+         ((coroPtr + 0x7c7#64) ↦₆₄ cw5) ∗
+         ((s.sp + 0x98#64) ↦₆₄ (coroPtr + 0x398#64)) ∗
+         ((s.sp + 0xa8#64) ↦₆₄ w4) ∗
+         ((s.sp + 0xb8#64) ↦₆₄ w2) ∗
+         ((s.sp + 0xd0#64) ↦₆₄ w3) ∗
+         ((fp + 0xffffffffffffff80#64) ↦₆₄ w6) ∗
+         ((fp + 0xffffffffffffff88#64) ↦₈ b63) ∗
+         ((coroPtr + 0x470#64) ↦₆₄ remoteAddrPtr) ∗
+         ((coroPtr + 0x478#64) ↦₆₄ localAddrPtr) ∗
+         ((coroPtr + 0x488#64) ↦₆₄ kyberPreKeyId64) ∗
+         ((msgPtr + 0x7c#64) ↦₃₂ opkId))
+        (fun s1 P_f =>
+          (P_f ⊢
+            ((idKpFutVt + 0x8#64) ↦₆₄ᵣ BitVec.ofNat 64 kpBoxSize) ∗
+            ((idKpFutVt + 0x10#64) ↦₆₄ᵣ 8#64) ∗
+            A.pool ∗
+            stackAt s.sp allocHookStack ∗
+            bytes7At (s.sp + 0x3c8#64) b0 b1 b2 b3 b4 b5 b6 ∗
+            bytes7At (coroPtr + 0x798#64) b0 b1 b2 b3 b4 b5 b6 ∗
+            ((coroPtr + 0x79f#64) ↦₆₄ w0) ∗
+            ((coroPtr + 0x7a7#64) ↦₆₄ w1) ∗
+            ((coroPtr + 0x7af#64) ↦₆₄ w2) ∗
+            ((coroPtr + 0x7b7#64) ↦₆₄ w3) ∗
+            ((coroPtr + 0x7bf#64) ↦₆₄ w4) ∗
+            ((coroPtr + 0x7c7#64) ↦₆₄ w5) ∗
+            ((s.sp + 0x98#64) ↦₆₄ (coroPtr + 0x398#64)) ∗
+            ((s.sp + 0xa8#64) ↦₆₄ w4) ∗
+            ((s.sp + 0xb8#64) ↦₆₄ w2) ∗
+            ((s.sp + 0xd0#64) ↦₆₄ w3) ∗
+            ((fp + 0xffffffffffffff80#64) ↦₆₄ w6) ∗
+            ((fp + 0xffffffffffffff88#64) ↦₈ b63) ∗
+            ((coroPtr + 0x470#64) ↦₆₄ remoteAddrPtr) ∗
+            ((coroPtr + 0x478#64) ↦₆₄ localAddrPtr) ∗
+            ((coroPtr + 0x488#64) ↦₆₄ kyberPreKeyId64) ∗
+            ((msgPtr + 0x7c#64) ↦₃₂ opkId)) ∧
+          s1.sp = s.sp ∧
+          s1.trace = s.trace ∧
+          s1.readReg64 .x0 = coroPtr + 0x798#64 ∧
+          s1.readReg64 .x1 = localAddrPtr ∧
+          s1.readReg64 .x3 = remoteAddrPtr ∧
+          s1.readReg64 .x8 = b63.zeroExtend 64 ∧
+          s1.readReg64 .x9 = w6 ∧
+          s1.readReg64 .x10 = coroPtr + 0x798#64 ∧
+          s1.readReg64 .x11 = coroPtr + 0x7cf#64 ∧
+          s1.readReg64 .x19 = coroPtr ∧
+          s1.readReg64 .x21 = kyberPreKeyId64 ∧
+          s1.readReg64 .x22 = s.sp + 0x370#64 ∧
+          s1.readReg64 .x23 = s.sp + 0x930#64 ∧
+          s1.readReg64 .x24 = coroPtr + 0x398#64 ∧
+          s1.readReg64 .x25 = s.readReg64 .x25 ∧
+          s1.readReg64 .x26 = s.readReg64 .x26 ∧
+          s1.readReg64 .x27 = w5 ∧
+          s1.readReg64 .x28 = s.readReg64 .x28 ∧
+          s1.readReg64 .x29 = fp ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) :=
+  p2_seg5c1_fp_gen_hooks_wp b ext (StageP2ClosureHooks.of_allocContracts hA)
+
+set_option maxHeartbeats 1000000 in
+/-- Segment P2.5c2 (`+0x114c -> +0x1168`):
+Loads the first 32 bytes (`ik0..ik3`) of `IdentityKeyPair` from `coroPtr + 0x798..0x7b7`,
+writes `w6` and `b63` to `coroPtr + 0x7cf..0x7d7`, stores `ik0..ik3` to `sp + 0x930..0x94f`,
+sets `x2 = msgPtr + 0xc8`, and stops at `+0x1168`. -/
+theorem p2_seg5c2_ext_wp (b : BitVec 64)
+    (ext : String → Option (State → State))
+    (s : State) (coroPtr msgPtr ik0 ik1 ik2 ik3 w6 cw6
+    u_930 u_938 u_940 u_948 : BitVec 64)
+    (b63 c63 opk_b64 : BitVec 8)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x114c#64)
+    (hrun : s.status = .Running)
+    (hx8 : s.readReg64 .x8 = b63.zeroExtend 64)
+    (hx9 : s.readReg64 .x9 = w6)
+    (hx10 : s.readReg64 .x10 = coroPtr + 0x798#64)
+    (hx11 : s.readReg64 .x11 = coroPtr + 0x7cf#64)
+    (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx23 : s.readReg64 .x23 = s.sp + 0x930#64) :
+    SepWP (tripleRatchetProgAtExt b ext)
+      ((tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x1168#64) s
+      (((coroPtr + 0x798#64) ↦₆₄ ik0) ∗
+       ((coroPtr + 0x7a0#64) ↦₆₄ ik1) ∗
+       ((coroPtr + 0x7a8#64) ↦₆₄ ik2) ∗
+       ((coroPtr + 0x7b0#64) ↦₆₄ ik3) ∗
+       ((coroPtr + 0x7cf#64) ↦₆₄ cw6) ∗
+       ((coroPtr + 0x7d7#64) ↦₈ c63) ∗
+       ((coroPtr + 0x4f0#64) ↦₈ opk_b64) ∗
+       ((coroPtr + 0x468#64) ↦₆₄ msgPtr) ∗
+       ((s.sp + 0x930#64) ↦₆₄ u_930) ∗
+       ((s.sp + 0x938#64) ↦₆₄ u_938) ∗
+       ((s.sp + 0x940#64) ↦₆₄ u_940) ∗
+       ((s.sp + 0x948#64) ↦₆₄ u_948))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((coroPtr + 0x798#64) ↦₆₄ ik0) ∗
+          ((coroPtr + 0x7a0#64) ↦₆₄ ik1) ∗
+          ((coroPtr + 0x7a8#64) ↦₆₄ ik2) ∗
+          ((coroPtr + 0x7b0#64) ↦₆₄ ik3) ∗
+          ((coroPtr + 0x7cf#64) ↦₆₄ w6) ∗
+          ((coroPtr + 0x7d7#64) ↦₈ b63) ∗
+          ((coroPtr + 0x4f0#64) ↦₈ opk_b64) ∗
+          ((coroPtr + 0x468#64) ↦₆₄ msgPtr) ∗
+          ((s.sp + 0x930#64) ↦₆₄ ik0) ∗
+          ((s.sp + 0x938#64) ↦₆₄ ik1) ∗
+          ((s.sp + 0x940#64) ↦₆₄ ik2) ∗
+          ((s.sp + 0x948#64) ↦₆₄ ik3)) ∧
+        s1.sp = s.sp ∧
+        s1.trace = s.trace ∧
+        s1.readReg64 .x0 = s.readReg64 .x0 ∧
+        s1.readReg64 .x1 = s.readReg64 .x1 ∧
+        s1.readReg64 .x2 = msgPtr + 0xc8#64 ∧
+        s1.readReg64 .x3 = s.readReg64 .x3 ∧
+        s1.readReg64 .x8 = opk_b64.zeroExtend 64 ∧
+        s1.readReg64 .x9 = msgPtr ∧
+        s1.readReg64 .x10 = coroPtr + 0x798#64 ∧
+        s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x21 = s.readReg64 .x21 ∧
+        s1.readReg64 .x22 = s.readReg64 .x22 ∧
+        s1.readReg64 .x23 = s.sp + 0x930#64 ∧
+        s1.readReg64 .x24 = s.readReg64 .x24 ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧
+        s1.readReg64 .x26 = s.readReg64 .x26 ∧
+        s1.readReg64 .x27 = s.readReg64 .x27 ∧
+        s1.readReg64 .x28 = s.readReg64 .x28 ∧
+        s1.readReg64 .x29 = s.readReg64 .x29 ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x114c 0x1164
+  dsimp only [tripleRatchetProgAtExt] at hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx8' : s.readReg64 (Reg.gpr 8#5) = b63.zeroExtend 64 := hx8
+  have hx9' : s.readReg64 (Reg.gpr 9#5) = w6 := hx9
+  have hx10' : s.readReg64 (Reg.gpr 10#5) = coroPtr + 0x798#64 := hx10
+  have hx11' : s.readReg64 (Reg.gpr 11#5) = coroPtr + 0x7cf#64 := hx11
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx23' : s.readReg64 (Reg.gpr 23#5) = s.sp + 0x930#64 := hx23
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨Entails.of_eq (by ac_rfl), rfl, rfl,
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+
+set_option maxHeartbeats 1000000 in
+/-- Segment P2.5c3 (`+0x1168 -> IdentityKey::is_same_account`):
+Copies the second 32 bytes (`ik4..ik7`) of `IdentityKeyPair` to `sp + 0x950..0x96f`, `spkKp`
+to `sp + 0xa90..0xacf`, `opk` to `sp + 0x3e0..0x420`, `kyberKp` to `sp + 0x560..0x57f`,
+`message.identity_key` to `sp + 0x6a0..0x6bf`, `message.base_key` to `sp + 0x7e0..0x7ff`,
+sets `[coroPtr + 0x4f1] = 0#8`, and calls `IdentityKey::is_same_account` at `+0x11cc`. -/
+theorem p2_seg5c3_ext_wp (b : BitVec 64)
+    (ext : String → Option (State → State))
+    (s : State) (coroPtr msgPtr localAddrPtr remoteAddrPtr
+    ik4 ik5 ik6 ik7
+    spk0 spk1 spk2 spk3 spk4 spk5 spk6 spk7
+    opk0 opk1 opk2 opk3 opk4 opk5 opk6 opk7
+    kyb0 kyb1 kyb2 kyb3
+    ikA0 ikA1 ikA2 ikA3
+    ekA0 ekA1 ekA2 ekA3
+    u_950 u_958 u_960 u_968
+    u_a90 u_a98 u_aa0 u_aa8 u_ab0 u_ab8 u_ac0 u_ac8
+    u_3e0 u_3e8 u_3f0 u_3f8 u_400 u_408 u_410 u_418
+    u_560 u_568 u_570 u_578
+    u_6a0 u_6a8 u_6b0 u_6b8
+    u_7e0 u_7e8 u_7f0 u_7f8 : BitVec 64)
+    (opk_b64 u_420 b_4f1 : BitVec 8)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x1168#64)
+    (hrun : s.status = .Running)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true)
+    (hx0 : s.readReg64 .x0 = coroPtr + 0x798#64)
+    (hx1 : s.readReg64 .x1 = localAddrPtr)
+    (hx2 : s.readReg64 .x2 = msgPtr + 0xc8#64)
+    (hx3 : s.readReg64 .x3 = remoteAddrPtr)
+    (hx8 : s.readReg64 .x8 = opk_b64.zeroExtend 64)
+    (hx9 : s.readReg64 .x9 = msgPtr)
+    (hx10 : s.readReg64 .x10 = coroPtr + 0x798#64)
+    (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx22 : s.readReg64 .x22 = s.sp + 0x370#64)
+    (hx23 : s.readReg64 .x23 = s.sp + 0x930#64)
+    (hx24 : s.readReg64 .x24 = coroPtr + 0x398#64)
+    (hx28 : s.readReg64 .x28 = s.sp + 0xa90#64) :
+    SepWP (tripleRatchetProgAtExt b ext)
+      ((tripleRatchetProgAtExt b ext).fnAddr "<libsignal_protocol::identity_key::IdentityKey>::is_same_account") s
+      (((coroPtr + 0x7b8#64) ↦₆₄ ik4) ∗
+       ((coroPtr + 0x7c0#64) ↦₆₄ ik5) ∗
+       ((coroPtr + 0x7c8#64) ↦₆₄ ik6) ∗
+       ((coroPtr + 0x7d0#64) ↦₆₄ ik7) ∗
+       ((coroPtr + 0x398#64) ↦₆₄ spk0) ∗
+       ((coroPtr + 0x3a0#64) ↦₆₄ spk1) ∗
+       ((coroPtr + 0x3a8#64) ↦₆₄ spk2) ∗
+       ((coroPtr + 0x3b0#64) ↦₆₄ spk3) ∗
+       ((coroPtr + 0x3b8#64) ↦₆₄ spk4) ∗
+       ((coroPtr + 0x3c0#64) ↦₆₄ spk5) ∗
+       ((coroPtr + 0x3c8#64) ↦₆₄ spk6) ∗
+       ((coroPtr + 0x3d0#64) ↦₆₄ spk7) ∗
+       ((coroPtr + 0x4b0#64) ↦₆₄ opk0) ∗
+       ((coroPtr + 0x4b8#64) ↦₆₄ opk1) ∗
+       ((coroPtr + 0x4c0#64) ↦₆₄ opk2) ∗
+       ((coroPtr + 0x4c8#64) ↦₆₄ opk3) ∗
+       ((coroPtr + 0x4d0#64) ↦₆₄ opk4) ∗
+       ((coroPtr + 0x4d8#64) ↦₆₄ opk5) ∗
+       ((coroPtr + 0x4e0#64) ↦₆₄ opk6) ∗
+       ((coroPtr + 0x4e8#64) ↦₆₄ opk7) ∗
+       ((coroPtr + 0x4f1#64) ↦₈ b_4f1) ∗
+       ((coroPtr + 0x3d8#64) ↦₆₄ kyb0) ∗
+       ((coroPtr + 0x3e0#64) ↦₆₄ kyb1) ∗
+       ((coroPtr + 0x3e8#64) ↦₆₄ kyb2) ∗
+       ((coroPtr + 0x3f0#64) ↦₆₄ kyb3) ∗
+       ((msgPtr + 0xa8#64) ↦₆₄ ekA0) ∗
+       ((msgPtr + 0xb0#64) ↦₆₄ ekA1) ∗
+       ((msgPtr + 0xb8#64) ↦₆₄ ekA2) ∗
+       ((msgPtr + 0xc0#64) ↦₆₄ ekA3) ∗
+       ((msgPtr + 0xc8#64) ↦₆₄ ikA0) ∗
+       ((msgPtr + 0xd0#64) ↦₆₄ ikA1) ∗
+       ((msgPtr + 0xd8#64) ↦₆₄ ikA2) ∗
+       ((msgPtr + 0xe0#64) ↦₆₄ ikA3) ∗
+       ((s.sp + 0x950#64) ↦₆₄ u_950) ∗
+       ((s.sp + 0x958#64) ↦₆₄ u_958) ∗
+       ((s.sp + 0x960#64) ↦₆₄ u_960) ∗
+       ((s.sp + 0x968#64) ↦₆₄ u_968) ∗
+       ((s.sp + 0xa90#64) ↦₆₄ u_a90) ∗
+       ((s.sp + 0xa98#64) ↦₆₄ u_a98) ∗
+       ((s.sp + 0xaa0#64) ↦₆₄ u_aa0) ∗
+       ((s.sp + 0xaa8#64) ↦₆₄ u_aa8) ∗
+       ((s.sp + 0xab0#64) ↦₆₄ u_ab0) ∗
+       ((s.sp + 0xab8#64) ↦₆₄ u_ab8) ∗
+       ((s.sp + 0xac0#64) ↦₆₄ u_ac0) ∗
+       ((s.sp + 0xac8#64) ↦₆₄ u_ac8) ∗
+       ((s.sp + 0x3e0#64) ↦₆₄ u_3e0) ∗
+       ((s.sp + 0x3e8#64) ↦₆₄ u_3e8) ∗
+       ((s.sp + 0x3f0#64) ↦₆₄ u_3f0) ∗
+       ((s.sp + 0x3f8#64) ↦₆₄ u_3f8) ∗
+       ((s.sp + 0x400#64) ↦₆₄ u_400) ∗
+       ((s.sp + 0x408#64) ↦₆₄ u_408) ∗
+       ((s.sp + 0x410#64) ↦₆₄ u_410) ∗
+       ((s.sp + 0x418#64) ↦₆₄ u_418) ∗
+       ((s.sp + 0x420#64) ↦₈ u_420) ∗
+       ((s.sp + 0x560#64) ↦₆₄ u_560) ∗
+       ((s.sp + 0x568#64) ↦₆₄ u_568) ∗
+       ((s.sp + 0x570#64) ↦₆₄ u_570) ∗
+       ((s.sp + 0x578#64) ↦₆₄ u_578) ∗
+       ((s.sp + 0x6a0#64) ↦₆₄ u_6a0) ∗
+       ((s.sp + 0x6a8#64) ↦₆₄ u_6a8) ∗
+       ((s.sp + 0x6b0#64) ↦₆₄ u_6b0) ∗
+       ((s.sp + 0x6b8#64) ↦₆₄ u_6b8) ∗
+       ((s.sp + 0x7e0#64) ↦₆₄ u_7e0) ∗
+       ((s.sp + 0x7e8#64) ↦₆₄ u_7e8) ∗
+       ((s.sp + 0x7f0#64) ↦₆₄ u_7f0) ∗
+       ((s.sp + 0x7f8#64) ↦₆₄ u_7f8))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((coroPtr + 0x7b8#64) ↦₆₄ ik4) ∗
+          ((coroPtr + 0x7c0#64) ↦₆₄ ik5) ∗
+          ((coroPtr + 0x7c8#64) ↦₆₄ ik6) ∗
+          ((coroPtr + 0x7d0#64) ↦₆₄ ik7) ∗
+          ((coroPtr + 0x398#64) ↦₆₄ spk0) ∗
+          ((coroPtr + 0x3a0#64) ↦₆₄ spk1) ∗
+          ((coroPtr + 0x3a8#64) ↦₆₄ spk2) ∗
+          ((coroPtr + 0x3b0#64) ↦₆₄ spk3) ∗
+          ((coroPtr + 0x3b8#64) ↦₆₄ spk4) ∗
+          ((coroPtr + 0x3c0#64) ↦₆₄ spk5) ∗
+          ((coroPtr + 0x3c8#64) ↦₆₄ spk6) ∗
+          ((coroPtr + 0x3d0#64) ↦₆₄ spk7) ∗
+          ((coroPtr + 0x4b0#64) ↦₆₄ opk0) ∗
+          ((coroPtr + 0x4b8#64) ↦₆₄ opk1) ∗
+          ((coroPtr + 0x4c0#64) ↦₆₄ opk2) ∗
+          ((coroPtr + 0x4c8#64) ↦₆₄ opk3) ∗
+          ((coroPtr + 0x4d0#64) ↦₆₄ opk4) ∗
+          ((coroPtr + 0x4d8#64) ↦₆₄ opk5) ∗
+          ((coroPtr + 0x4e0#64) ↦₆₄ opk6) ∗
+          ((coroPtr + 0x4e8#64) ↦₆₄ opk7) ∗
+          ((coroPtr + 0x4f1#64) ↦₈ 0#8) ∗
+          ((coroPtr + 0x3d8#64) ↦₆₄ kyb0) ∗
+          ((coroPtr + 0x3e0#64) ↦₆₄ kyb1) ∗
+          ((coroPtr + 0x3e8#64) ↦₆₄ kyb2) ∗
+          ((coroPtr + 0x3f0#64) ↦₆₄ kyb3) ∗
+          ((msgPtr + 0xa8#64) ↦₆₄ ekA0) ∗
+          ((msgPtr + 0xb0#64) ↦₆₄ ekA1) ∗
+          ((msgPtr + 0xb8#64) ↦₆₄ ekA2) ∗
+          ((msgPtr + 0xc0#64) ↦₆₄ ekA3) ∗
+          ((msgPtr + 0xc8#64) ↦₆₄ ikA0) ∗
+          ((msgPtr + 0xd0#64) ↦₆₄ ikA1) ∗
+          ((msgPtr + 0xd8#64) ↦₆₄ ikA2) ∗
+          ((msgPtr + 0xe0#64) ↦₆₄ ikA3) ∗
+          ((s.sp + 0x950#64) ↦₆₄ ik4) ∗
+          ((s.sp + 0x958#64) ↦₆₄ ik5) ∗
+          ((s.sp + 0x960#64) ↦₆₄ ik6) ∗
+          ((s.sp + 0x968#64) ↦₆₄ ik7) ∗
+          ((s.sp + 0xa90#64) ↦₆₄ spk0) ∗
+          ((s.sp + 0xa98#64) ↦₆₄ spk1) ∗
+          ((s.sp + 0xaa0#64) ↦₆₄ spk2) ∗
+          ((s.sp + 0xaa8#64) ↦₆₄ spk3) ∗
+          ((s.sp + 0xab0#64) ↦₆₄ spk4) ∗
+          ((s.sp + 0xab8#64) ↦₆₄ spk5) ∗
+          ((s.sp + 0xac0#64) ↦₆₄ spk6) ∗
+          ((s.sp + 0xac8#64) ↦₆₄ spk7) ∗
+          ((s.sp + 0x3e0#64) ↦₆₄ opk0) ∗
+          ((s.sp + 0x3e8#64) ↦₆₄ opk1) ∗
+          ((s.sp + 0x3f0#64) ↦₆₄ opk2) ∗
+          ((s.sp + 0x3f8#64) ↦₆₄ opk3) ∗
+          ((s.sp + 0x400#64) ↦₆₄ opk4) ∗
+          ((s.sp + 0x408#64) ↦₆₄ opk5) ∗
+          ((s.sp + 0x410#64) ↦₆₄ opk6) ∗
+          ((s.sp + 0x418#64) ↦₆₄ opk7) ∗
+          ((s.sp + 0x420#64) ↦₈ opk_b64) ∗
+          ((s.sp + 0x560#64) ↦₆₄ kyb0) ∗
+          ((s.sp + 0x568#64) ↦₆₄ kyb1) ∗
+          ((s.sp + 0x570#64) ↦₆₄ kyb2) ∗
+          ((s.sp + 0x578#64) ↦₆₄ kyb3) ∗
+          ((s.sp + 0x6a0#64) ↦₆₄ ikA0) ∗
+          ((s.sp + 0x6a8#64) ↦₆₄ ikA1) ∗
+          ((s.sp + 0x6b0#64) ↦₆₄ ikA2) ∗
+          ((s.sp + 0x6b8#64) ↦₆₄ ikA3) ∗
+          ((s.sp + 0x7e0#64) ↦₆₄ ekA0) ∗
+          ((s.sp + 0x7e8#64) ↦₆₄ ekA1) ∗
+          ((s.sp + 0x7f0#64) ↦₆₄ ekA2) ∗
+          ((s.sp + 0x7f8#64) ↦₆₄ ekA3)) ∧
+        s1.sp = s.sp ∧
+        s1.trace = s.trace ∧
+        s1.readReg64 .x0 = coroPtr + 0x798#64 ∧
+        s1.readReg64 .x1 = localAddrPtr ∧
+        s1.readReg64 .x2 = msgPtr + 0xc8#64 ∧
+        s1.readReg64 .x3 = remoteAddrPtr ∧
+        s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x21 = s.readReg64 .x21 ∧
+        s1.readReg64 .x22 = s.sp + 0x370#64 ∧
+        s1.readReg64 .x23 = s.sp + 0x930#64 ∧
+        s1.readReg64 .x24 = coroPtr + 0x398#64 ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧
+        s1.readReg64 .x26 = s.readReg64 .x26 ∧
+        s1.readReg64 .x27 = s.readReg64 .x27 ∧
+        s1.readReg64 .x28 = s.sp + 0xa90#64 ∧
+        s1.readReg64 .x29 = s.readReg64 .x29 ∧
+        s1.readReg64 .x30 =
+          (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x11d0#64 ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  have htarget :
+      (tripleRatchetProgAtExt b ext).fnAddr "<libsignal_protocol::identity_key::IdentityKey>::is_same_account" =
+      (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName +
+        bv% ((2^64 + ls_off% "<libsignal_protocol::identity_key::IdentityKey>::is_same_account" -
+          ls_off% "libsignal_protocol::session_management::message_decrypt_prekey::<libsignal_cli_handshake::Coins>::{closure#0}") % 2^64) := by
+    simp [tripleRatchetProgAtExt, Program.fnAddr,
+      ls_lemma% fnOff "<libsignal_protocol::identity_key::IdentityKey>::is_same_account",
+      ls_lemma% fnOff "libsignal_protocol::session_management::message_decrypt_prekey::<libsignal_cli_handshake::Coins>::{closure#0}"]
+  rw [htarget]
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x1168 0x11cc
+  dsimp only [tripleRatchetProgAtExt] at hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx0' : s.readReg64 (Reg.gpr 0#5) = coroPtr + 0x798#64 := hx0
+  have hx1' : s.readReg64 (Reg.gpr 1#5) = localAddrPtr := hx1
+  have hx2' : s.readReg64 (Reg.gpr 2#5) = msgPtr + 0xc8#64 := hx2
+  have hx3' : s.readReg64 (Reg.gpr 3#5) = remoteAddrPtr := hx3
+  have hx8' : s.readReg64 (Reg.gpr 8#5) = opk_b64.zeroExtend 64 := hx8
+  have hx9' : s.readReg64 (Reg.gpr 9#5) = msgPtr := hx9
+  have hx10' : s.readReg64 (Reg.gpr 10#5) = coroPtr + 0x798#64 := hx10
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx22' : s.readReg64 (Reg.gpr 22#5) = s.sp + 0x370#64 := hx22
+  have hx23' : s.readReg64 (Reg.gpr 23#5) = s.sp + 0x930#64 := hx23
+  have hx24' : s.readReg64 (Reg.gpr 24#5) = coroPtr + 0x398#64 := hx24
+  have hx28' : s.readReg64 (Reg.gpr 28#5) = s.sp + 0xa90#64 := hx28
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨Entails.of_eq (by ac_rfl), rfl, rfl,
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+
+set_option maxHeartbeats 1000000 in
+/-- Segment P2.5d (`+0x11d0 -> initialize_bob_session`):
+Populates `BobSignalProtocolParameters` at `coroPtr + 0x658..0x781` from the stack buffers,
+sets `x0 = coroPtr + 0x658`, `x1 = coroPtr + 0x398`, `x8 = sp + 0x3e0`, and calls
+`initialize_bob_session` at `+0x1258`. -/
+theorem p2_seg5d_ext_wp (b : BitVec 64)
+    (ext : String → Option (State → State))
+    (s : State) (coroPtr kyberPreKeyId64 sameAcctWord
+    ik0 ik1 ik2 ik3 ik4 ik5 ik6 ik7 spk0 spk1 spk2 spk3 spk4 spk5 spk6 spk7
+    opk0 opk1 opk2 opk3 opk4 opk5 opk6 opk7 kyb0 kyb1 kyb2 kyb3
+    ikA0 ikA1 ikA2 ikA3 ekA0 ekA1 ekA2 ekA3
+    c_658 c_660 c_668 c_670 c_678 c_680 c_688 c_690
+    c_698 c_6a0 c_6a8 c_6b0 c_6b8 c_6c0 c_6c8 c_6d0
+    c_6d8 c_6e0 c_6e8 c_6f0 c_6f8 c_700 c_708 c_710
+    c_718 c_720 c_728 c_730 c_738
+    c_740 c_748 c_750 c_758 c_760 c_768 c_770 c_778 : BitVec 64)
+    (opk_b64 c_780 c_781 : BitVec 8)
+    (hpc : s.pc = (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x11d0#64)
+    (hrun : s.status = .Running) (hsp_align : (s.sp &&& 15#64 == 0#64) = true)
+    (hx0 : s.readReg64 .x0 = sameAcctWord) (hx19 : s.readReg64 .x19 = coroPtr)
+    (hx21 : s.readReg64 .x21 = kyberPreKeyId64) (hx22 : s.readReg64 .x22 = s.sp + 0x370#64)
+    (hx23 : s.readReg64 .x23 = s.sp + 0x930#64) (hx24 : s.readReg64 .x24 = coroPtr + 0x398#64)
+    (hx28 : s.readReg64 .x28 = s.sp + 0xa90#64) :
+    SepWP (tripleRatchetProgAtExt b ext)
+      ((tripleRatchetProgAtExt b ext).fnAddr
+        "libsignal_protocol::ratchet::initialize_bob_session") s
+      (((s.sp + 0x930#64) ↦₆₄ ik0) ∗ ((s.sp + 0x938#64) ↦₆₄ ik1) ∗
+       ((s.sp + 0x940#64) ↦₆₄ ik2) ∗ ((s.sp + 0x948#64) ↦₆₄ ik3) ∗
+       ((s.sp + 0x950#64) ↦₆₄ ik4) ∗ ((s.sp + 0x958#64) ↦₆₄ ik5) ∗
+       ((s.sp + 0x960#64) ↦₆₄ ik6) ∗ ((s.sp + 0x968#64) ↦₆₄ ik7) ∗
+       ((s.sp + 0xa90#64) ↦₆₄ spk0) ∗ ((s.sp + 0xa98#64) ↦₆₄ spk1) ∗
+       ((s.sp + 0xaa0#64) ↦₆₄ spk2) ∗ ((s.sp + 0xaa8#64) ↦₆₄ spk3) ∗
+       ((s.sp + 0xab0#64) ↦₆₄ spk4) ∗ ((s.sp + 0xab8#64) ↦₆₄ spk5) ∗
+       ((s.sp + 0xac0#64) ↦₆₄ spk6) ∗ ((s.sp + 0xac8#64) ↦₆₄ spk7) ∗
+       ((s.sp + 0x3e0#64) ↦₆₄ opk0) ∗ ((s.sp + 0x3e8#64) ↦₆₄ opk1) ∗
+       ((s.sp + 0x3f0#64) ↦₆₄ opk2) ∗ ((s.sp + 0x3f8#64) ↦₆₄ opk3) ∗
+       ((s.sp + 0x400#64) ↦₆₄ opk4) ∗ ((s.sp + 0x408#64) ↦₆₄ opk5) ∗
+       ((s.sp + 0x410#64) ↦₆₄ opk6) ∗ ((s.sp + 0x418#64) ↦₆₄ opk7) ∗
+       ((s.sp + 0x420#64) ↦₈ opk_b64) ∗
+       ((s.sp + 0x560#64) ↦₆₄ kyb0) ∗ ((s.sp + 0x568#64) ↦₆₄ kyb1) ∗
+       ((s.sp + 0x570#64) ↦₆₄ kyb2) ∗ ((s.sp + 0x578#64) ↦₆₄ kyb3) ∗
+       ((s.sp + 0x6a0#64) ↦₆₄ ikA0) ∗ ((s.sp + 0x6a8#64) ↦₆₄ ikA1) ∗
+       ((s.sp + 0x6b0#64) ↦₆₄ ikA2) ∗ ((s.sp + 0x6b8#64) ↦₆₄ ikA3) ∗
+       ((s.sp + 0x7e0#64) ↦₆₄ ekA0) ∗ ((s.sp + 0x7e8#64) ↦₆₄ ekA1) ∗
+       ((s.sp + 0x7f0#64) ↦₆₄ ekA2) ∗ ((s.sp + 0x7f8#64) ↦₆₄ ekA3) ∗
+       ((coroPtr + 0x658#64) ↦₆₄ c_658) ∗ ((coroPtr + 0x660#64) ↦₆₄ c_660) ∗
+       ((coroPtr + 0x668#64) ↦₆₄ c_668) ∗ ((coroPtr + 0x670#64) ↦₆₄ c_670) ∗
+       ((coroPtr + 0x678#64) ↦₆₄ c_678) ∗ ((coroPtr + 0x680#64) ↦₆₄ c_680) ∗
+       ((coroPtr + 0x688#64) ↦₆₄ c_688) ∗ ((coroPtr + 0x690#64) ↦₆₄ c_690) ∗
+       ((coroPtr + 0x698#64) ↦₆₄ c_698) ∗ ((coroPtr + 0x6a0#64) ↦₆₄ c_6a0) ∗
+       ((coroPtr + 0x6a8#64) ↦₆₄ c_6a8) ∗ ((coroPtr + 0x6b0#64) ↦₆₄ c_6b0) ∗
+       ((coroPtr + 0x6b8#64) ↦₆₄ c_6b8) ∗ ((coroPtr + 0x6c0#64) ↦₆₄ c_6c0) ∗
+       ((coroPtr + 0x6c8#64) ↦₆₄ c_6c8) ∗ ((coroPtr + 0x6d0#64) ↦₆₄ c_6d0) ∗
+       ((coroPtr + 0x6d8#64) ↦₆₄ c_6d8) ∗ ((coroPtr + 0x6e0#64) ↦₆₄ c_6e0) ∗
+       ((coroPtr + 0x6e8#64) ↦₆₄ c_6e8) ∗ ((coroPtr + 0x6f0#64) ↦₆₄ c_6f0) ∗
+       ((coroPtr + 0x6f8#64) ↦₆₄ c_6f8) ∗ ((coroPtr + 0x700#64) ↦₆₄ c_700) ∗
+       ((coroPtr + 0x708#64) ↦₆₄ c_708) ∗ ((coroPtr + 0x710#64) ↦₆₄ c_710) ∗
+       ((coroPtr + 0x718#64) ↦₆₄ c_718) ∗ ((coroPtr + 0x720#64) ↦₆₄ c_720) ∗
+       ((coroPtr + 0x728#64) ↦₆₄ c_728) ∗ ((coroPtr + 0x730#64) ↦₆₄ c_730) ∗
+       ((coroPtr + 0x738#64) ↦₆₄ c_738) ∗ ((coroPtr + 0x740#64) ↦₆₄ c_740) ∗
+       ((coroPtr + 0x748#64) ↦₆₄ c_748) ∗ ((coroPtr + 0x750#64) ↦₆₄ c_750) ∗
+       ((coroPtr + 0x758#64) ↦₆₄ c_758) ∗ ((coroPtr + 0x760#64) ↦₆₄ c_760) ∗
+       ((coroPtr + 0x768#64) ↦₆₄ c_768) ∗ ((coroPtr + 0x770#64) ↦₆₄ c_770) ∗
+       ((coroPtr + 0x778#64) ↦₆₄ c_778) ∗
+       ((coroPtr + 0x780#64) ↦₈ c_780) ∗ ((coroPtr + 0x781#64) ↦₈ c_781))
+      (fun s1 P_f =>
+        (P_f ⊢
+          ((s.sp + 0x930#64) ↦₆₄ ik0) ∗ ((s.sp + 0x938#64) ↦₆₄ ik1) ∗
+          ((s.sp + 0x940#64) ↦₆₄ ik2) ∗ ((s.sp + 0x948#64) ↦₆₄ ik3) ∗
+          ((s.sp + 0x950#64) ↦₆₄ ik4) ∗ ((s.sp + 0x958#64) ↦₆₄ ik5) ∗
+          ((s.sp + 0x960#64) ↦₆₄ ik6) ∗ ((s.sp + 0x968#64) ↦₆₄ ik7) ∗
+          ((s.sp + 0xa90#64) ↦₆₄ spk0) ∗ ((s.sp + 0xa98#64) ↦₆₄ spk1) ∗
+          ((s.sp + 0xaa0#64) ↦₆₄ spk2) ∗ ((s.sp + 0xaa8#64) ↦₆₄ spk3) ∗
+          ((s.sp + 0xab0#64) ↦₆₄ spk4) ∗ ((s.sp + 0xab8#64) ↦₆₄ spk5) ∗
+          ((s.sp + 0xac0#64) ↦₆₄ spk6) ∗ ((s.sp + 0xac8#64) ↦₆₄ spk7) ∗
+          ((s.sp + 0x3e0#64) ↦₆₄ opk0) ∗ ((s.sp + 0x3e8#64) ↦₆₄ opk1) ∗
+          ((s.sp + 0x3f0#64) ↦₆₄ opk2) ∗ ((s.sp + 0x3f8#64) ↦₆₄ opk3) ∗
+          ((s.sp + 0x400#64) ↦₆₄ opk4) ∗ ((s.sp + 0x408#64) ↦₆₄ opk5) ∗
+          ((s.sp + 0x410#64) ↦₆₄ opk6) ∗ ((s.sp + 0x418#64) ↦₆₄ opk7) ∗
+          ((s.sp + 0x420#64) ↦₈ opk_b64) ∗
+          ((s.sp + 0x560#64) ↦₆₄ kyb0) ∗ ((s.sp + 0x568#64) ↦₆₄ kyb1) ∗
+          ((s.sp + 0x570#64) ↦₆₄ kyb2) ∗ ((s.sp + 0x578#64) ↦₆₄ kyb3) ∗
+          ((s.sp + 0x6a0#64) ↦₆₄ ikA0) ∗ ((s.sp + 0x6a8#64) ↦₆₄ ikA1) ∗
+          ((s.sp + 0x6b0#64) ↦₆₄ ikA2) ∗ ((s.sp + 0x6b8#64) ↦₆₄ ikA3) ∗
+          ((s.sp + 0x7e0#64) ↦₆₄ ekA0) ∗ ((s.sp + 0x7e8#64) ↦₆₄ ekA1) ∗
+          ((s.sp + 0x7f0#64) ↦₆₄ ekA2) ∗ ((s.sp + 0x7f8#64) ↦₆₄ ekA3) ∗
+          ((coroPtr + 0x658#64) ↦₆₄ ik0) ∗ ((coroPtr + 0x660#64) ↦₆₄ ik1) ∗
+          ((coroPtr + 0x668#64) ↦₆₄ ik2) ∗ ((coroPtr + 0x670#64) ↦₆₄ ik3) ∗
+          ((coroPtr + 0x678#64) ↦₆₄ ik4) ∗ ((coroPtr + 0x680#64) ↦₆₄ ik5) ∗
+          ((coroPtr + 0x688#64) ↦₆₄ ik6) ∗ ((coroPtr + 0x690#64) ↦₆₄ ik7) ∗
+          ((coroPtr + 0x698#64) ↦₆₄ spk0) ∗ ((coroPtr + 0x6a0#64) ↦₆₄ spk1) ∗
+          ((coroPtr + 0x6a8#64) ↦₆₄ spk2) ∗ ((coroPtr + 0x6b0#64) ↦₆₄ spk3) ∗
+          ((coroPtr + 0x6b8#64) ↦₆₄ spk4) ∗ ((coroPtr + 0x6c0#64) ↦₆₄ spk5) ∗
+          ((coroPtr + 0x6c8#64) ↦₆₄ spk6) ∗ ((coroPtr + 0x6d0#64) ↦₆₄ spk7) ∗
+          ((coroPtr + 0x6d8#64) ↦₆₄ ikA0) ∗ ((coroPtr + 0x6e0#64) ↦₆₄ ikA1) ∗
+          ((coroPtr + 0x6e8#64) ↦₆₄ ikA2) ∗ ((coroPtr + 0x6f0#64) ↦₆₄ ikA3) ∗
+          ((coroPtr + 0x6f8#64) ↦₆₄ ekA0) ∗ ((coroPtr + 0x700#64) ↦₆₄ ekA1) ∗
+          ((coroPtr + 0x708#64) ↦₆₄ ekA2) ∗ ((coroPtr + 0x710#64) ↦₆₄ ekA3) ∗
+          ((coroPtr + 0x718#64) ↦₆₄ kyb0) ∗ ((coroPtr + 0x720#64) ↦₆₄ kyb1) ∗
+          ((coroPtr + 0x728#64) ↦₆₄ kyb2) ∗ ((coroPtr + 0x730#64) ↦₆₄ kyb3) ∗
+          ((coroPtr + 0x738#64) ↦₆₄ kyberPreKeyId64) ∗ ((coroPtr + 0x740#64) ↦₆₄ opk0) ∗
+          ((coroPtr + 0x748#64) ↦₆₄ opk1) ∗ ((coroPtr + 0x750#64) ↦₆₄ opk2) ∗
+          ((coroPtr + 0x758#64) ↦₆₄ opk3) ∗ ((coroPtr + 0x760#64) ↦₆₄ opk4) ∗
+          ((coroPtr + 0x768#64) ↦₆₄ opk5) ∗ ((coroPtr + 0x770#64) ↦₆₄ opk6) ∗
+          ((coroPtr + 0x778#64) ↦₆₄ opk7) ∗
+          ((coroPtr + 0x780#64) ↦₈ opk_b64) ∗ ((coroPtr + 0x781#64) ↦₈ sameAcctWord.setWidth 8)) ∧
+        s1.sp = s.sp ∧ s1.trace = s.trace ∧
+        s1.readReg64 .x0 = coroPtr + 0x658#64 ∧ s1.readReg64 .x1 = coroPtr + 0x398#64 ∧
+        s1.readReg64 .x8 = s.sp + 0x3e0#64 ∧ s1.readReg64 .x19 = coroPtr ∧
+        s1.readReg64 .x21 = kyberPreKeyId64 ∧ s1.readReg64 .x22 = s.sp + 0x370#64 ∧
+        s1.readReg64 .x23 = s.sp + 0x930#64 ∧ s1.readReg64 .x24 = coroPtr + 0x398#64 ∧
+        s1.readReg64 .x25 = s.readReg64 .x25 ∧ s1.readReg64 .x26 = s.readReg64 .x26 ∧
+        s1.readReg64 .x27 = s.readReg64 .x27 ∧ s1.readReg64 .x28 = s.sp + 0xa90#64 ∧
+        s1.readReg64 .x29 = s.readReg64 .x29 ∧
+        s1.readReg64 .x30 =
+          (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName + 0x125c#64 ∧ calleeSavedVRegs s1 = calleeSavedVRegs s) := by
+  have htarget :
+      (tripleRatchetProgAtExt b ext).fnAddr
+        "libsignal_protocol::ratchet::initialize_bob_session" =
+      (tripleRatchetProgAtExt b ext).fnAddr decryptPrekeyClosureName +
+        bv% ((2^64 + ls_off% "libsignal_protocol::ratchet::initialize_bob_session" -
+          ls_off% "libsignal_protocol::session_management::message_decrypt_prekey::<libsignal_cli_handshake::Coins>::{closure#0}") % 2^64) := by
+    simp [tripleRatchetProgAtExt, Program.fnAddr,
+      ls_lemma% fnOff "libsignal_protocol::ratchet::initialize_bob_session",
+      ls_lemma% fnOff "libsignal_protocol::session_management::message_decrypt_prekey::<libsignal_cli_handshake::Coins>::{closure#0}"]
+  rw [htarget]
+  closure_fetches_range_cli b (Rust.withPanics ext) 0x11d0 0x1258
+  dsimp only [tripleRatchetProgAtExt] at hpc ⊢
+  generalize_entry (libsignalSessionCode.rebase b (Rust.withPanics ext)).fnAddr
+    decryptPrekeyClosureName = entry
+  examples_hide_fetches
+  have hx0' : s.readReg64 (Reg.gpr 0#5) = sameAcctWord := hx0
+  have hx19' : s.readReg64 (Reg.gpr 19#5) = coroPtr := hx19
+  have hx21' : s.readReg64 (Reg.gpr 21#5) = kyberPreKeyId64 := hx21
+  have hx22' : s.readReg64 (Reg.gpr 22#5) = s.sp + 0x370#64 := hx22
+  have hx23' : s.readReg64 (Reg.gpr 23#5) = s.sp + 0x930#64 := hx23
+  have hx24' : s.readReg64 (Reg.gpr 24#5) = coroPtr + 0x398#64 := hx24
+  have hx28' : s.readReg64 (Reg.gpr 28#5) = s.sp + 0xa90#64 := hx28
+  wp_steps
+  refine SepWP.done (by simp_all [arm64_norm]) (by simp_all [arm64_norm]) ?_
+  refine ⟨Entails.of_eq (by ac_rfl), rfl, rfl,
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm],
+    by simp_all [arm64_norm], by simp_all [arm64_norm], by simp_all [arm64_norm]⟩
+
+end CryptoVerification.Cli.E2E.Pqxdh.ResponderClosure.Kits

@@ -1,0 +1,7 @@
+import Computational.ScratchFixtureP6
+
+namespace Computational.ScratchFixtureP6Root
+
+theorem p6_uses_core_only_def : Computational.ScratchFixtureP6.coreOnlyDef = 99 := rfl
+
+end Computational.ScratchFixtureP6Root

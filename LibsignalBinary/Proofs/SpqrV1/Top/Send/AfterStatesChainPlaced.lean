@@ -1,0 +1,650 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.SpqrV1.Top.Send.DefsPlaced
+public import LibsignalBinary.Proofs.SpqrV1.Top.Send.AfterStatesChain
+import all Init.Data.String.Defs
+import all Init.Data.String.Pattern.Basic
+import all Init.Data.String.Pattern.String
+import all Init.Data.String.Slice
+import all Init.Data.String.TakeDrop
+import LibsignalBinary.Proofs.ConsumeMessageKey.FindIndexProofs.Loop
+import LibsignalBinary.Proofs.E2E.InMem.HashbrownBin.SessionStoreFutures.StoreCommon
+import LibsignalBinary.Proofs.E2E.Record.Serialization.SessionCloneAux.Base
+import LibsignalBinary.Proofs.SpqrV1.Drop.ProtoTop2
+import LibsignalBinary.Proofs.SpqrV1.Kdf.HkdfToSlice
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageEncode.Base
+import LibsignalBinary.Proofs.TripleRatchet.ReceiveRatchet.From.Callees
+import ProofLib.SepLogic.WP.Apply
+
+/-!
+# Relocatable `spqr::send`: Panic Blocks, Shared Epilogue, and Error Cleanup
+
+Relocatable panic blocks (`+12004`, `+13552`), shared return epilogue (`+4576..+4664`), and chain
+error cleanup paths (`+3848`, `+3896`, `+3920`) for `spqr::send::<HookRng>` (Block `124`).
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+
+namespace CryptoVerification.SpqrV1.Top.Send
+
+open Arm64 Arm64.Obj ProofLib ProofLib.ProgramReflection
+open CryptoGames.LibsignalSession (ShaCompress)
+open CryptoVerification
+open CryptoVerification.CodeLayout
+open CryptoVerification.RustHeap
+open CryptoVerification.LibsignalSpqrV1
+open CryptoVerification.LibsignalTripleRatchet
+open CryptoVerification.SpqrV1.ChainProofs
+open CryptoVerification.SpqrV1.Top.ChainFrom
+open CryptoVerification.SpqrV1.Top.ChainFromVersionNegotiation
+open CryptoVerification.SpqrV1.Top.MessageSerialize
+open CryptoVerification.SpqrV1.Drop
+open CryptoVerification.SpqrV1.States.IntoPb
+open CryptoVerification.SpqrV1.Prost.EncodeToVec hiding SepWP.done
+open CryptoVerification.SpqrV1.Top.Send.Placed
+
+variable [LibsignalPlacement]
+
+attribute [local irreducible] libsignalSessionCode Program.fetch Program.externAt? Program.fnAddr Program.fnOff Obj.lookup
+attribute [local arm64_norm, local wp_norm] bv_sub_add_lit BitVec.toNat_zero
+attribute [local simp, local arm64_norm]
+  CryptoVerification.SpqrV1.Drop.none2Cap_add_two_beq_zero
+  CryptoVerification.SpqrV1.Drop.noneCap_add_two_beq_zero
+
+attribute [local simp, local arm64_norm, local wp_norm]
+  extractLsb_lo_append64 extractLsb_hi_append64
+
+attribute [-arm64_norm]
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.sp_sub_688_eq_hsp
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.sp_add_neg688_eq_hsp
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.sp_sub_96_eq_hsp_592
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.sp_add_neg96_eq_hsp_592
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.hsp_592_sub_592_eq_hsp
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.hsp_592_add_neg592_eq_hsp
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.hsp_add_688_sub_688
+  CryptoVerification.SpqrV1.Kdf.HkdfToSliceProof.hsp_592_add_96_eq_sp
+
+/-- Relocatable `__rust_dealloc` hook contract on `spqrSendPlacedProg ext`. -/
+abbrev DeallocOkPlaced (A : RustAlloc) (ext : String → Option (State → State)) : Prop :=
+  subroutine_ok (spqrSendPlacedProg ext)
+    (lsρ "_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc") (rustDeallocSpec A)
+
+abbrev chunkedStatesLocal1JumpTableSym : String :=
+  "libsignal_session:.rodata.core::ptr::drop_glue::<spqr::v1::chunked::states::States>"
+
+def chunkedStatesLocal1JumpTablePlacedAt : SepProp :=
+  (lsmpl.ρ chunkedStatesLocal1JumpTableSym) ↦ᵣ chunkedStatesLocal1JumpTableBytes
+
+def dropChunkedStatesLocal1PlacedSpec (A : RustAlloc) (F : ShaCompress) :
+    Spec (DropChunkedStatesGhost F) where
+  pre := fun x s =>
+    ⌜s.readReg64 .x0 = x.a⌝ ∗
+      chunkedStatesAt A x.a x.st ∗
+      chunkedStatesLocal1JumpTablePlacedAt ∗
+      A.pool ∗ stackAt s.sp dropStackPoly64
+  post := fun x s0 sf =>
+    ⌜sf.trace = s0.trace⌝ ∗
+      memRegion x.a chunkedStatesSize ∗
+      chunkedStatesLocal1JumpTablePlacedAt ∗
+      A.pool ∗ stackAt s0.sp dropStackPoly64
+
+/-! ## Panic Blocks (`+12004` and `+13552`) -/
+
+theorem corePanic_spqrSend_placed_extern (ext : String → Option (State → State))
+    (h : ext "_RNvNtCskxtBwYRO61I_4core9panicking5panic" = some Rust.panicked) :
+    (spqrSendPlacedProg ext).externAt? (lsρ "_RNvNtCskxtBwYRO61I_4core9panicking5panic") =
+      some Rust.panicked := by
+  have h1 := ls_externAt?_of_mem (prog := spqrSendPlacedProg ext) (i := 124)
+    (sym := "_RNvNtCskxtBwYRO61I_4core9panicking5panic")
+  have h2 : Rust.isPanicSymbol "_RNvNtCskxtBwYRO61I_4core9panicking5panic" = false := by decide +kernel
+  rw [h1]
+  simp only [Rust.withPanics, h2, Bool.false_eq_true, ↓reduceIte, h]
+
+theorem panicSubOverflow_spqrSend_placed_extern (ext : String → Option (State → State))
+    (h : ext "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow" =
+      some Rust.panicked) :
+    (spqrSendPlacedProg ext).externAt?
+      (lsρ "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow") =
+      some Rust.panicked := by
+  have h1 := ls_externAt?_of_mem (prog := spqrSendPlacedProg ext) (i := 124)
+    (sym := "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow")
+  have h2 : Rust.isPanicSymbol
+      "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow" = false := by
+    decide +kernel
+  rw [h1]
+  simp only [Rust.withPanics, h2, Bool.false_eq_true, ↓reduceIte, h]
+
+/-- `+12004` (`0x33740`): steps to `lsρ "_RNvNtCskxtBwYRO61I_4core9panicking5panic"` for
+    `sendKeySomeWithoutChain`. -/
+theorem step_panic_33740_placed {ext : String → Option (State → State)}
+    (s : State) (P : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 12004#64)
+    (hrun : s.status = .Running) :
+    SepWP (spqrSendPlacedProg ext)
+      (lsρ "_RNvNtCskxtBwYRO61I_4core9panicking5panic") s P
+      (fun sf Q => sf.status = .Running ∧ sf.trace = s.trace ∧ sf.mem = s.mem ∧ (Q ⊢ P)) := by
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc ⊢
+  wp_steps
+  refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs) ⟨by wp_norm_goal, by wp_norm_goal, rfl, Entails.refl _⟩
+
+/-- `+13552` (`0x33d4c`): steps to `lsρ
+    "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow"` for
+    `sendEpochUnderflow` (`msg.epoch == 0`). -/
+theorem step_panic_33d4c_placed {ext : String → Option (State → State)}
+    (s : State) (P : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 13552#64)
+    (hrun : s.status = .Running) :
+    SepWP (spqrSendPlacedProg ext)
+      (lsρ "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow") s P
+      (fun sf Q => sf.status = .Running ∧ sf.trace = s.trace ∧ sf.mem = s.mem ∧ (Q ⊢ P)) := by
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc ⊢
+  wp_steps
+  refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs) ⟨by wp_norm_goal, by wp_norm_goal, rfl, Entails.refl _⟩
+
+/-! ## Shared Epilogue (`+4576 -> +4600 -> +4632 -> +4664`) -/
+
+/-- `+4632 -> +4664` (`0x31a74 -> 0x31a94`): restores `sp = s0.sp`, pops callee-saved registers
+    `x19..x30`, and returns to `s0.readReg64 .x30`. -/
+theorem step_epilogue_31a74_placed {ext : String → Option (State → State)}
+    (s0 s : State) (Frame : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 4632#64)
+    (hrun : s.status = .Running)
+    (hsp : s.sp = s0.sp - 0x1f80#64)
+    (hsp0_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hvregs : calleeSavedVRegs s = calleeSavedVRegs s0 := by simp only [wp_norm, arm64_norm, *]) :
+    SepWP (spqrSendPlacedProg ext) (s0.readReg64 .x30) s
+      (stackAt s.sp spqrSendCalleeStack ∗
+        memRegion s.sp 0x1f20 ∗
+        spqrSendSavedRegs s.sp s0 ∗
+        Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s0.sp ∧
+        Arm64.CalleeSavedPreserved s0 sf ∧
+        (Q ⊢ stackAt s0.sp spqrSendStack ∗ Frame)) := by
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, spqrSendSavedRegs, BitVec.ofNat_eq_ofNat] at hpc ⊢
+  have hsp_align : (s.sp &&& 15#64 == 0#64) = true := by
+    rw [hsp]; exact spAligned_sub s0.sp 0x1f80#64 hsp0_align (by decide)
+  have hsp_add1 : s.sp + 4096#64 + 3872#64 = s.sp + 0x1f20#64 := by bv_omega
+  have hsp_sub60 : s.sp + 0x1f20#64 = s0.sp - 0x60#64 := by rw [hsp]; bv_omega
+  have hsp_add2_beq : ((s.sp + 0x1f20#64) &&& 15#64 == 0#64) = true := by
+    rw [hsp_sub60]; exact spAligned_sub s0.sp 0x60#64 hsp0_align (by decide)
+  have hsp_add2 : (s.sp + 0x1f20#64) &&& 15#64 = 0#64 := by
+    rwa [beq_iff_eq] at hsp_add2_beq
+  have hsp_end : s.sp + 0x1f20#64 + 96#64 = s0.sp := by rw [hsp]; bv_omega
+  wp_steps
+  refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    ⟨by wp_norm_goal, by wp_norm_goal, ?_, ?_, ?_⟩
+  · simp only [wp_norm, arm64_norm, hsp_add1, hsp_end]
+  · simp only [Arm64.CalleeSavedPreserved, Reg.fp, wp_norm, arm64_norm, hsp_add1, hsp_end, hvregs, and_self]
+  · rw [hsp]
+    refine Entails.trans (Entails.of_eq ?_)
+      (sepConj_mono_left (stack_restore_spqrSend s0.sp s0))
+    unfold spqrSendSavedRegs
+    ac_rfl
+
+/-- `+4600 -> +4632` (`0x31a54 -> 0x31a74`): checks `x23` and (when `x23 = noneCap`) `[sp +
+    0x60] = noneCap`, reaching `+4632` with `memRegion (s.sp + 0x60#64) 80`. -/
+theorem step_epilogue_31a54_placed {ext : String → Option (State → State)}
+    (s : State) (x23 : BitVec 64) (Frame : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 4600#64)
+    (hrun : s.status = .Running)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4632#64) s
+      (chainOrigSlotAt s.sp x23 ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ memRegion (s.sp + 0x60#64) 80 ∗ Frame)) := by
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc ⊢
+  by_cases hnone : x23 = noneCap
+  · subst hnone
+    rw [chainOrigSlotAt_none]
+    wp_steps
+    refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, ?_⟩
+    rw [← chainOrigSlotAt_none]
+    exact sepConj_mono_left (chainOrigSlotAt_entails_memRegion_80 s.sp noneCap)
+  · rw [chainOrigSlotAt_of_ne hnone]
+    have hcmn : (x23 + 1#64 != 0#64) = true := by
+      rw [bne_iff_ne]
+      intro h; apply hnone; revert h; bv_omega
+    wp_steps
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+
+/-- `+4576 -> +4600` (`0x31a3c -> 0x31a54`): drops `optVersionNegotiationPBAt A (s.sp + 0x30#64)
+    vn` and reaches `+4600` with `memRegion (s.sp + 0x30#64) 48`. -/
+theorem step_epilogue_31a3c_placed {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkPlaced A ext)
+    (s : State) (vn : Option VersionNegotiationPB) (x23 : BitVec 64) (Frame : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 4576#64)
+    (hrun : s.status = .Running)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4600#64) s
+      (CryptoVerification.SpqrV1.ProtoRepr.optVersionNegotiationPBAt A (s.sp + 0x30#64) vn ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ memRegion (s.sp + 0x30#64) 48 ∗ A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hdealloc_raw : subroutine_ok (spqrSendPlacedProg ext)
+      (lsρ "_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc") (rustDeallocSpec A) :=
+    hdealloc
+  simp only [rustDeallocSpec] at hdealloc_raw
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdealloc_raw hpc ⊢
+  have hstack_dealloc :
+      stackAt s.sp spqrSendCalleeStack =
+        memRegion (s.sp - 123008#64)
+          (spqrSendCalleeStack - allocHookStack) ∗
+          stackAt s.sp allocHookStack :=
+    ProofLib.stackAt_split_bottom s.sp allocHookStack
+      (spqrSendCalleeStack - allocHookStack) (by decide)
+  have hadd8 : (s.sp + 48#64) + 8#64 = s.sp + 56#64 := by bv_omega
+  have hadd16 : (s.sp + 48#64) + 16#64 = s.sp + 64#64 := by bv_omega
+  have hmerge_none :
+      ((s.sp + 48#64) ↦₆₄ LibsignalTripleRatchetRepr.noneCap) ∗ memRegion (s.sp + 56#64) 40 ⊢
+        memRegion (s.sp + 48#64) 48 := by
+    rw [← hadd8]
+    exact optVersionNegotiationPBAt_none_entails_memRegion_48 (s.sp + 48#64)
+  have hmerge_vn : ∀ c p : BitVec 64,
+      ((s.sp + 48#64) ↦₆₄ c) ∗ ((s.sp + 56#64) ↦₆₄ p) ∗ memRegion (s.sp + 64#64) 32 ⊢
+        memRegion (s.sp + 48#64) 48 := by
+    intro c p
+    have h := vnHeader_entails_memRegion_48 (s.sp + 48#64) c p
+    rwa [hadd8, hadd16] at h
+  cases vn with
+  | none =>
+    dsimp only [CryptoVerification.SpqrV1.ProtoRepr.optVersionNegotiationPBAt]
+    rw [hadd8]
+    wp_steps
+    refine SepWP.focus_weaken hmerge_none (by sep_focus) ?_
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+  | some v =>
+    dsimp only [CryptoVerification.SpqrV1.ProtoRepr.optVersionNegotiationPBAt]
+    refine SepWP.focus_weaken (versionNegotiationPBAt_entails_dealloc A (s.sp + 48#64) v) (by sep_focus) ?_
+    wp_pull_exists; rename_i g; rcases g with ⟨cap, ptr⟩
+    wp_focus_pure; intro hcap_lt
+    dsimp only [vecCapPtrDealloc] at hcap_lt ⊢
+    by_cases hc0 : (cap == 0#64) = true <;>
+      simp only [hc0, Bool.false_eq_true, ↓reduceIte, emp_sepConj, sepConj_emp]
+    · have hc_eq : cap = 0#64 := by rwa [beq_iff_eq] at hc0
+      subst hc_eq
+      wp_steps
+      refine SepWP.focus_weaken (hmerge_vn 0#64 ptr) (by sep_focus) ?_
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+    · have hslt := cap_ne_zero_slt_one_false hcap_lt hc0
+      have hlt_false := cap_ne_zero_lt_one_false hcap_lt hc0
+      rw [hstack_dealloc]
+      wp_steps; wp_apply
+      refine SepWP.focus_weaken (hmerge_vn cap ptr) (by sep_focus) ?_
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by simp only [wp_norm, arm64_norm, *],
+          Entails.of_eq (by ac_rfl)⟩
+
+/-! ## Error Cleanup Paths (`+3848`, `+3896`, `+3920 -> +4576`) -/
+
+/-- `+3920 -> +4576` (`0x317ac -> 0x31a3c`): drops `optEpochSecretRegSlotAt A s.sp x21 x27 key`
+    and reaches `+4576` with `memRegion (s.sp + 0x1bc0#64) 16`. -/
+theorem step_drop_key_317ac_placed {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkPlaced A ext)
+    (s : State) (x21 x27 x23 : BitVec 64) (key : Option EpochSecret) (Frame : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 3920#64)
+    (hrun : s.status = .Running)
+    (hx21 : s.readReg64 .x21 = x21)
+    (hx27 : s.readReg64 .x27 = x27)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4576#64) s
+      (optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ memRegion (s.sp + 0x1bc0#64) 16 ∗ A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hdealloc_raw : subroutine_ok (spqrSendPlacedProg ext)
+      (lsρ "_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc") (rustDeallocSpec A) :=
+    hdealloc
+  simp only [rustDeallocSpec] at hdealloc_raw
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdealloc_raw hpc ⊢
+  have hstack_dealloc :
+      stackAt s.sp spqrSendCalleeStack =
+        memRegion (s.sp - 123008#64)
+          (spqrSendCalleeStack - allocHookStack) ∗
+          stackAt s.sp allocHookStack :=
+    ProofLib.stackAt_split_bottom s.sp allocHookStack
+      (spqrSendCalleeStack - allocHookStack) (by decide)
+  cases key with
+  | none =>
+    dsimp only [optEpochSecretRegSlotAt]
+    wp_focus_pure; intro hx21_eq
+    subst hx21_eq
+    wp_steps
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+  | some es =>
+    refine SepWP.focus_weaken (optEpochSecretRegSlotAt_some_entails_dealloc A s.sp x21 x27 es) (by sep_focus) ?_
+    wp_focus_pure; intro hcap_lt
+    dsimp only [vecCapPtrDealloc] at hcap_lt ⊢
+    by_cases hc0 : (x21 == 0#64) = true <;>
+      simp only [hc0, Bool.false_eq_true, ↓reduceIte, emp_sepConj, sepConj_emp]
+    · have hc_eq : x21 = 0#64 := by rwa [beq_iff_eq] at hc0
+      subst hc_eq
+      wp_steps
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+    · have hult := ult_sub_one_false_of_pos hcap_lt hc0
+      rw [hstack_dealloc]
+      wp_steps; wp_apply
+      wp_steps
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by simp only [wp_norm, arm64_norm, *], Entails.of_eq (by ac_rfl)⟩
+
+/-- `+3880 -> +4576` (`0x31784 -> 0x31a3c`): drops `optEpochSecretRegSlotAt A s.sp x21 x27 key`
+    and reaches `+4576` with `memRegion (s.sp + 0x1bc0#64) 16`. -/
+theorem step_drop_key_31784_placed {A : RustAlloc}
+    {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkPlaced A ext)
+    (s : State) (x21 x27 x23 : BitVec 64) (key : Option EpochSecret) (Frame : SepProp)
+    (hpc : s.pc = spqrSendPlacedEntry + 3880#64)
+    (hrun : s.status = .Running)
+    (hx21 : s.readReg64 .x21 = x21)
+    (hx27 : s.readReg64 .x27 = x27)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4576#64) s
+      (optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ memRegion (s.sp + 0x1bc0#64) 16 ∗ A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hdealloc_raw : subroutine_ok (spqrSendPlacedProg ext)
+      (lsρ "_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc") (rustDeallocSpec A) :=
+    hdealloc
+  simp only [rustDeallocSpec] at hdealloc_raw
+  dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdealloc_raw hpc ⊢
+  have hstack_dealloc :
+      stackAt s.sp spqrSendCalleeStack =
+        memRegion (s.sp - 123008#64)
+          (spqrSendCalleeStack - allocHookStack) ∗
+          stackAt s.sp allocHookStack :=
+    ProofLib.stackAt_split_bottom s.sp allocHookStack
+      (spqrSendCalleeStack - allocHookStack) (by decide)
+  cases key with
+  | none =>
+    dsimp only [optEpochSecretRegSlotAt]
+    wp_focus_pure; intro hx21_eq
+    subst hx21_eq
+    wp_steps
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+  | some es =>
+    refine SepWP.focus_weaken (optEpochSecretRegSlotAt_some_entails_dealloc A s.sp x21 x27 es) (by sep_focus) ?_
+    wp_focus_pure; intro hcap_lt
+    dsimp only [vecCapPtrDealloc] at hcap_lt ⊢
+    by_cases hc0 : (x21 == 0#64) = true <;>
+      simp only [hc0, Bool.false_eq_true, ↓reduceIte, emp_sepConj, sepConj_emp]
+    · have hc_eq : x21 = 0#64 := by rwa [beq_iff_eq] at hc0
+      subst hc_eq
+      wp_steps
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, Entails.refl _⟩
+    · have hule := ule_sub_one_true_of_pos hcap_lt hc0
+      rw [hstack_dealloc]
+      wp_steps; wp_apply
+      wp_steps
+      exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+          by simp only [wp_norm, arm64_norm, *], Entails.of_eq (by ac_rfl)⟩
+
+omit [LibsignalPlacement] in
+private theorem subroutine_ok_withMemEq_of_withLsCodeLoaded {α : Type} {prog : Program}
+    {entry : BitVec 64} {pl : MultiPlacement} {spec : Spec α} {m : Memory}
+    (hcl : LibsignalCodeLoaded pl m)
+    (h : subroutine_ok prog entry (withLsCodeLoaded pl spec)) :
+    subroutine_ok prog entry (withMemEq m spec) :=
+  subroutine_ok_mono h
+    (fun _ _ _ hp => by
+      obtain ⟨hm, hpre⟩ := extract_withMemEq hp
+      dsimp only [withLsCodeLoaded]
+      rw [sepConj_assoc, sepConj_left_comm, satisfies_pure_sepConj]
+      exact ⟨hm ▸ hcl, hpre⟩)
+    (fun _ _ _ _ hq => hq)
+
+/-- `+3896 -> +4576` (`0x31794 -> 0x31a3c`): `Error::ChainNotAvailable` cleanup when
+    `state_pb.chain = none` and `state_pb.version_negotiation = none`. Writes `spqrSendResultAt
+    A ret none`, drops `st1` at `s.sp + 0x190#64` via Block `271`, drops `key` in `(x21, x27,
+    [s.sp + 0x1bc0])`, and reaches `+4576`. -/
+theorem step_err_31794_placed {A : RustAlloc} {F : ShaCompress}
+    {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkPlaced A ext)
+    (hdrop_states : subroutine_ok (spqrSendPlacedProg ext)
+      (lsmpl.base 140) (withLsCodeLoaded lsmpl (dropChunkedStatesLocal1PlacedSpec A F)))
+    (s : State) (ret x21 x27 x23 : BitVec 64)
+    (st1 : States spqrPolyApi (spqrAuthApi F))
+    (key : Option EpochSecret) (Frame : SepProp)
+    (hcl : LibsignalCodeLoaded lsmpl s.mem)
+    (hpc : s.pc = spqrSendPlacedEntry + 3896#64)
+    (hrun : s.status = .Running)
+    (hx19 : s.readReg64 .x19 = ret)
+    (hx21 : s.readReg64 .x21 = x21)
+    (hx27 : s.readReg64 .x27 = x27)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4576#64) s
+      (memRegion ret 72 ∗
+        chunkedStatesAt A (s.sp + 0x190#64) st1 ∗
+        optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        chunkedStatesLocal1JumpTablePlacedAt ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ spqrSendResultAt A ret none ∗
+          memRegion (s.sp + 0x190#64) 928 ∗
+          memRegion (s.sp + 0x1bc0#64) 16 ∗
+          chunkedStatesLocal1JumpTablePlacedAt ∗
+          A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hstack_drop :
+      stackAt s.sp spqrSendCalleeStack =
+        memRegion (s.sp - 123008#64)
+          (spqrSendCalleeStack - dropStackPoly64) ∗
+          stackAt s.sp dropStackPoly64 :=
+    ProofLib.stackAt_split_bottom s.sp dropStackPoly64
+      (spqrSendCalleeStack - dropStackPoly64) (by decide)
+  refine SepWP.seq
+    (mid := spqrSendPlacedEntry + 3920#64)
+    (Mid := fun s1 P1 =>
+      s1.status = .Running ∧
+      s1.trace = s.trace ∧
+      s1.sp = s.sp ∧
+      s1.readReg64 .x21 = x21 ∧
+      s1.readReg64 .x27 = x27 ∧
+      s1.readReg64 .x23 = x23 ∧
+      calleeSavedVRegs s1 = calleeSavedVRegs s ∧
+      (P1 ⊢ optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗
+        (spqrSendResultAt A ret none ∗
+          memRegion (s.sp + 0x190#64) 928 ∗
+          chunkedStatesLocal1JumpTablePlacedAt ∗ Frame)))
+    ?_ ?_
+  · dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc ⊢
+    rw [memRegion_72_split_byte ret, hstack_drop]
+    wp_pull_exists
+    apply sepWP_seq_lscl hcl (mid := lsmpl.base 140)
+    wp_steps
+    refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs) fun hcl_call => ?_
+    have hdrop_st := subroutine_ok_withMemEq_of_withLsCodeLoaded hcl_call hdrop_states
+    simp only [withMemEq, dropChunkedStatesLocal1PlacedSpec] at hdrop_st
+    dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdrop_st
+    wp_call hdrop_st ⟨s.sp + 400#64, st1⟩
+    refine SepWP.focus_weaken (sendResultAt_none_of_byte A ret 15#8) (by sep_focus) ?_
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by simp only [wp_norm, arm64_norm, *], by
+          dsimp only [chunkedStatesSize]
+          exact Entails.of_eq (by ac_rfl)⟩
+  · intro s1 P1 hpc1 _ ⟨hrun1, htr1, hsp1, hx21_1, hx27_1, hx23_1, hvregs1, hP1⟩
+    have hsp1_align : (s1.sp &&& 15#64 == 0#64) = true := by rw [hsp1]; exact hsp_align
+    refine SepWP.weaken_pre hP1 ?_
+    have hstep := step_drop_key_317ac_placed hdealloc s1 x21 x27 x23 key
+      (spqrSendResultAt A ret none ∗ memRegion (s.sp + 0x190#64) 928 ∗
+        chunkedStatesLocal1JumpTablePlacedAt ∗ Frame)
+      hpc1 hrun1 hx21_1 hx27_1 hx23_1 hsp1_align
+    rw [hsp1] at hstep
+    refine SepWP.mono hstep ?_
+    intro sf Q _ _ ⟨hrunf, htrf, hspf, hx23f, hvregsf, hQ⟩
+    exact ⟨hrunf, htrf.trans htr1, hspf, hx23f, hvregsf.trans hvregs1, Entails.trans hQ (Entails.of_eq (by ac_rfl))⟩
+
+/-- `+3848 -> +4576` (`0x31764 -> 0x31a3c`): `Chain::from_pb` / `chain_from_version_negotiation`
+    error cleanup. Loads the 24-byte error (`w1, w2, w3 : BitVec 64`) from `[s.sp +
+    0x1060..0x1078]`, writes `spqrSendResultAt A ret none`, drops `st1` at `s.sp + 0x190#64` via
+    Block `271`, drops `key` in `(x21, x27, [s.sp + 0x1bc0])`, and reaches `+4576`. -/
+theorem step_err_31764_placed {A : RustAlloc} {F : ShaCompress}
+    {ext : String → Option (State → State)}
+    (hdealloc : DeallocOkPlaced A ext)
+    (hdrop_states : subroutine_ok (spqrSendPlacedProg ext)
+      (lsmpl.base 140) (withLsCodeLoaded lsmpl (dropChunkedStatesLocal1PlacedSpec A F)))
+    (s : State) (ret x21 x27 x23 w1 w2 w3 : BitVec 64)
+    (st1 : States spqrPolyApi (spqrAuthApi F))
+    (key : Option EpochSecret) (Frame : SepProp)
+    (hcl : LibsignalCodeLoaded lsmpl s.mem)
+    (hpc : s.pc = spqrSendPlacedEntry + 3848#64)
+    (hrun : s.status = .Running)
+    (hx19 : s.readReg64 .x19 = ret)
+    (hx21 : s.readReg64 .x21 = x21)
+    (hx27 : s.readReg64 .x27 = x27)
+    (hx23 : s.readReg64 .x23 = x23)
+    (hsp_align : (s.sp &&& 15#64 == 0#64) = true) :
+    SepWP (spqrSendPlacedProg ext)
+      (spqrSendPlacedEntry + 4576#64) s
+      (memRegion ret 72 ∗
+        ((s.sp + 0x1060#64) ↦₆₄ w1) ∗
+        ((s.sp + 0x1068#64) ↦₆₄ w2) ∗
+        ((s.sp + 0x1070#64) ↦₆₄ w3) ∗
+        chunkedStatesAt A (s.sp + 0x190#64) st1 ∗
+        optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        chunkedStatesLocal1JumpTablePlacedAt ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)
+      (fun sf Q =>
+        sf.status = .Running ∧
+        sf.trace = s.trace ∧
+        sf.sp = s.sp ∧
+        sf.readReg64 .x23 = x23 ∧
+        calleeSavedVRegs sf = calleeSavedVRegs s ∧
+        (Q ⊢ spqrSendResultAt A ret none ∗
+          memRegion (s.sp + 0x1060#64) 24 ∗
+          memRegion (s.sp + 0x190#64) 928 ∗
+          memRegion (s.sp + 0x1bc0#64) 16 ∗
+          chunkedStatesLocal1JumpTablePlacedAt ∗
+          A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗ Frame)) := by
+  have hstack_drop :
+      stackAt s.sp spqrSendCalleeStack =
+        memRegion (s.sp - 123008#64)
+          (spqrSendCalleeStack - dropStackPoly64) ∗
+          stackAt s.sp dropStackPoly64 :=
+    ProofLib.stackAt_split_bottom s.sp dropStackPoly64
+      (spqrSendCalleeStack - dropStackPoly64) (by decide)
+  have h24 :
+      ((s.sp + 4192#64) ↦₆₄ w1) ∗ ((s.sp + 4200#64) ↦₆₄ w2) ∗ ((s.sp + 4208#64) ↦₆₄ w3) ⊢
+        memRegion (s.sp + 4192#64) 24 := by
+    rw [ProofLib.memRegion_split' (b := s.sp + 4192#64) (n := 8) (k := 16)
+          (b' := s.sp + 4200#64) rfl (by bv_omega) (by decide),
+        ProofLib.memRegion_split' (b := s.sp + 4200#64) (n := 8) (k := 8)
+          (b' := s.sp + 4208#64) rfl (by bv_omega) (by decide)]
+    exact sepConj_mono (ProofLib.pointsTo64_entails_memRegion _ _)
+      (sepConj_mono (ProofLib.pointsTo64_entails_memRegion _ _)
+        (ProofLib.pointsTo64_entails_memRegion _ _))
+  refine SepWP.seq
+    (mid := spqrSendPlacedEntry + 3880#64)
+    (Mid := fun s1 P1 =>
+      s1.status = .Running ∧
+      s1.trace = s.trace ∧
+      s1.sp = s.sp ∧
+      s1.readReg64 .x21 = x21 ∧
+      s1.readReg64 .x27 = x27 ∧
+      s1.readReg64 .x23 = x23 ∧
+      calleeSavedVRegs s1 = calleeSavedVRegs s ∧
+      (P1 ⊢ optEpochSecretRegSlotAt A s.sp x21 x27 key ∗
+        A.pool ∗ stackAt s.sp spqrSendCalleeStack ∗
+        (spqrSendResultAt A ret none ∗
+          memRegion (s.sp + 0x1060#64) 24 ∗
+          memRegion (s.sp + 0x190#64) 928 ∗
+          chunkedStatesLocal1JumpTablePlacedAt ∗ Frame)))
+    ?_ ?_
+  · dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hpc ⊢
+    rw [memRegion_72_split_words3 ret, hstack_drop]
+    wp_pull_exists
+    apply sepWP_seq_lscl hcl (mid := lsmpl.base 140)
+    wp_steps
+    refine SepWP.done (by wp_norm_goal) (by wp_norm_lhs) fun hcl_call => ?_
+    have hdrop_st := subroutine_ok_withMemEq_of_withLsCodeLoaded hcl_call hdrop_states
+    simp only [withMemEq, dropChunkedStatesLocal1PlacedSpec] at hdrop_st
+    dsimp only [spqrSendPlacedProg, spqrSendPlacedEntry, BitVec.ofNat_eq_ofNat] at hdrop_st
+    wp_call hdrop_st ⟨s.sp + 400#64, st1⟩
+    refine SepWP.focus_weaken (sendResultAt_none_of_words3 A ret w1 w2 w3) (by sep_focus) ?_
+    refine SepWP.focus_weaken h24 (by sep_focus) ?_
+    exact SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      ⟨by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by wp_norm_goal, by wp_norm_goal, by wp_norm_goal,
+        by simp only [wp_norm, arm64_norm, *], by
+          dsimp only [chunkedStatesSize]
+          exact Entails.of_eq (by ac_rfl)⟩
+  · intro s1 P1 hpc1 _ ⟨hrun1, htr1, hsp1, hx21_1, hx27_1, hx23_1, hvregs1, hP1⟩
+    have hsp1_align : (s1.sp &&& 15#64 == 0#64) = true := by rw [hsp1]; exact hsp_align
+    refine SepWP.weaken_pre hP1 ?_
+    have hstep := step_drop_key_31784_placed hdealloc s1 x21 x27 x23 key
+      (spqrSendResultAt A ret none ∗ memRegion (s.sp + 0x1060#64) 24 ∗
+        memRegion (s.sp + 0x190#64) 928 ∗
+        chunkedStatesLocal1JumpTablePlacedAt ∗ Frame)
+      hpc1 hrun1 hx21_1 hx27_1 hx23_1 hsp1_align
+    rw [hsp1] at hstep
+    refine SepWP.mono hstep ?_
+    intro sf Q _ _ ⟨hrunf, htrf, hspf, hx23f, hvregsf, hQ⟩
+    exact ⟨hrunf, htrf.trans htr1, hspf, hx23f, hvregsf.trans hvregs1, Entails.trans hQ (Entails.of_eq (by ac_rfl))⟩
+
+end CryptoVerification.SpqrV1.Top.Send

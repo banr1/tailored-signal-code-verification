@@ -1,0 +1,27 @@
+[package]
+name = "prost-diff"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# Differential-fuzz vector generator for the trusted Lean codec
+# `LibsignalBinary/Specifications/LibsignalSignalMessage.lean` (rung 7b stage 2, task T2). Untrusted
+# tooling.
+#
+# Standalone: its own `[workspace]` table, its own `Cargo.lock` and `target/`, so it never joins the
+# session image build (`third_party/libsignal/libsignal-session/Cargo.toml` has no workspace and does not
+# list this crate). Pinned to the exact versions of the session image's lock file.
+#
+# Regenerate (offline, from this directory):
+#   RUSTUP_TOOLCHAIN=1.98.1 cargo run --offline --release -- ../../../../../Computational/Tests/Binary/data/prost_signal_vectors.txt
+
+[workspace]
+
+[dependencies]
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }
+prost-derive = "=0.14.4"
+bytes = { version = "=1.12.1", default-features = false, features = ["std"] }
+
+[profile.release]
+# As the session image: overflow checks on, so an arithmetic overflow in prost would panic here
+# (and be reported) instead of wrapping silently.
+overflow-checks = true

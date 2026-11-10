@@ -1,0 +1,1102 @@
+# Stock `ld.lld` 2-config IO.6b `StdBin` reproducibility lock (`libsignal v0.105.4`, WP1 + WP7).
+# `native_only = []`: `memmove`, `memcmp`, `bcmp`, `memcpy`, `memset`, `strlen`, and
+# `read`/`write`/`open`/`close`/`__errno_location` all come unmodified from `rustc 1.98.1`
+# `aarch64-unknown-linux-musl/lib/self-contained/libc.a` (`D10a` + `D10c` + `WP7`).
+
+recipe = "stdbin"
+elf_name = "libsignal-cli.elf"
+lean_pin_path = "LibsignalBinary/Specifications/SignalSession/CliElf.lean"
+libsignal_tag = "v0.105.4"
+rustc_version = "1.98.1"
+zig_version = "0.16.0"
+lld_version_prefix = "LLD 22.1.8 "
+engine_commit = "c2ef2f44e5988bf39d73cbf7fb5c784417818bd3"
+arm64_semantics_commit = "c2ef2f44e5988bf39d73cbf7fb5c784417818bd3"
+
+config_path = "third_party/libsignal/libsignal-session/translation.toml"
+config_paths = [
+  "third_party/libsignal/libsignal-session/translation.toml",
+  "third_party/libsignal/libsignal-session/cli/io/translation.toml",
+]
+
+main_rust_manifest_path = "third_party/libsignal/libsignal-session/cli-elf/std-main/Cargo.toml"
+main_rust_manifest_sha256 = "a37b4f59c7255c070a56e8004b376d994670edb16d1497fe84da533079f1f999"
+main_rust_lock_path = "third_party/libsignal/libsignal-session/cli-elf/std-main/Cargo.lock"
+main_rust_lock_sha256 = "52c5d4e8130d50403c27acf71296a7f96c1d1bc97d963f9d25c2c1224297ef19"
+main_rust_src_path = "third_party/libsignal/libsignal-session/cli-elf/std-main/src/main.rs"
+main_rust_src_sha256 = "2a701cea94f482bc49fcbaf27358fa2d072ae7922175f7da22b34484756292fd"
+rdl_shim_path = "third_party/libsignal/libsignal-session/cli-elf/stock/rdl_shim.S"
+rdl_shim_sha256 = "b1ea6c885b72ada33a0a52d4a8df3efdd0ddab579455e8853b5d85340a24da5f"
+
+native_only = []
+
+stock_ld_mode = "pinned"
+linker_script_path = "third_party/libsignal/libsignal-session/cli-elf/stock.ld"
+linker_script_sha256 = "ddd8dd9df46f6ed840fe35ec185cd754cd82a2e18d608b5c6268779b1e5c4daa"
+lld_no_relax = true
+
+elf_sha256 = "2f20c836342437a882b5882c34eab604e4f23b2b388c2b2a0696eeda51cddc7e"
+elf_size = 617448
+engine_stock_link_json_sha256 = "0a4e7ecf49ebd86f014121a7a995a0d7671bfbf81e2f6b757dfa7b2d63bb91db"
+link_map_sha256 = "9a106e1de1d90f94c623525871beb70fb6d4c9ac10a809698c393f24b5405600"
+main_rust_obj_sha256 = "db55dd1615f19140ce50155b9d51aeaf9ddbe262d8ce9669afb62b71510b0b9e"
+compiler_builtins_sha256 = "e9ede836762ee857758dcacd0a75f42eb68a7220d8c490648ef2c34a3b0d9958"
+stub_manifest_sha256 = "169fd6d8b82d5eb9012b92f779223afc20df30704ce00928fedcd63034cc833f"
+m4_lock_path = "third_party/libsignal/libsignal-session/cli-elf/stock/m4_stock.lock"
+m4_lock_sha256 = "9e934fa146794ffc1b689c0abc6f1b01a52a2d10c4fe3c6013da5a05ede78b8d"
+
+expected_phnum = 7
+expected_pt_loads = 4
+expected_symtab_count = 2832
+expected_loader_sym_count = 300
+expected_stub_manifest_count = 129
+expected_retained_stub_count = 82
+
+weakened_in_main = [
+  "main",
+]
+weak_undefined_allowed = [
+  "_DYNAMIC",
+  "__cxa_finalize",
+  "__deregister_frame_info",
+  "__register_frame_info",
+]
+displaced_weak = [
+  "__aarch64_cas8_acq_rel",
+  "__aarch64_ldadd8_rel",
+  "__aarch64_ldadd8_relax",
+]
+displaced_weak_referrers = [
+  "lib0_3.o:(.text._RNvMs_NtCsgNGxJeg8Tpk_5bytes9bytes_mutNtB4_8BytesMut13reserve_inner)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes11shared_drop)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes12shared_clone)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes18shared_to_mut_impl)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes18shared_to_vec_impl)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes19promotable_odd_drop)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes20promotable_even_drop)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes20promotable_odd_clone)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes5bytes21promotable_even_clone)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes9bytes_mut13shared_v_drop)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes9bytes_mut14shared_v_clone)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes9bytes_mut15shared_v_to_mut)",
+  "lib0_3.o:(.text._RNvNtCsgNGxJeg8Tpk_5bytes9bytes_mut15shared_v_to_vec)",
+  "lib0_3.o:(.text.unlikely._RNvNtCsgNGxJeg8Tpk_5bytes5bytes17shallow_clone_vec)",
+]
+
+lld_argv = [
+  "-static",
+  "-no-pie",
+  "--entry",
+  "_start",
+  "--gc-sections",
+  "--eh-frame-hdr",
+  "-z",
+  "now",
+  "--build-id=none",
+  "--strip-debug",
+  "-T",
+  "<STOCK_LD:third_party/libsignal/libsignal-session/cli-elf/stock.ld>",
+  "--no-relax",
+  "--undefined=session_message_encrypt",
+  "--undefined=session_message_decrypt_signal",
+  "--undefined=session_signal_message_parse",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecINtNtB7_3vec3VechEE8grow_oneCsfr5T3GFabw_3std",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecINtNtNtCslhx8g8CthFc_5gimli4read4unit14AttributeValueINtNtBR_12endian_slice11EndianSliceNtNtBT_9endianity12LittleEndianEjEE8grow_oneCsfr5T3GFabw_3std",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecNtNtB7_6string6StringE8grow_oneCsfr5T3GFabw_3std",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecNtNtCs9xXbyXU8IDi_9addr2line4line7LineRowE8grow_oneCsfr5T3GFabw_3std",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecNtNtCs9xXbyXU8IDi_9addr2line8function15FunctionAddressE8grow_oneCsfr5T3GFabw_3std",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVecNtNtNtCsfr5T3GFabw_3std3ffi6os_str8OsStringE8grow_oneBS_",
+  "--undefined=_RNvMs4_NtCs69KKACWg7bl_5alloc7raw_vecINtB5_6RawVechE8grow_oneB7_",
+  "--undefined=_RNvXs4_NtCs69KKACWg7bl_5alloc6stringNtB5_6StringNtNtCskxtBwYRO61I_4core5clone5Clone5clone",
+  "--print-gc-sections",
+  "--why-extract=why-extract.tsv",
+  "-Map=link.map",
+  "--print-gc-sections",
+  "--trace-symbol=_RINvCsdqpLrhraQXi_6subtle9black_boxhECs2wR8L9wiBdT_16curve25519_dalek",
+  "--trace-symbol=_RINvNtCskxtBwYRO61I_4core9panicking13assert_failedjjEB4_",
+  "--trace-symbol=_RINvNtCskxtBwYRO61I_4core9panicking13assert_failedyyEB4_",
+  "--trace-symbol=_RNvCs1njKG4L9aB3_7___rustc12___rust_alloc",
+  "--trace-symbol=_RNvCs1njKG4L9aB3_7___rustc14___rust_dealloc",
+  "--trace-symbol=_RNvCs1njKG4L9aB3_7___rustc14___rust_realloc",
+  "--trace-symbol=_RNvCs1njKG4L9aB3_7___rustc19___rust_alloc_zeroed",
+  "--trace-symbol=_RNvCs1njKG4L9aB3_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+  "--trace-symbol=_RNvCs4Dv7yoBiUx4_3log20MAX_LOG_LEVEL_FILTER",
+  "--trace-symbol=_RNvCs65XVORQObL2_12libcrux_hmac4hmac",
+  "--trace-symbol=_RNvCs9Xul1Kjr0QF_16libsignal_cli_io10read_stdin",
+  "--trace-symbol=_RNvCs9Xul1Kjr0QF_16libsignal_cli_io10write_file",
+  "--trace-symbol=_RNvCs9Xul1Kjr0QF_16libsignal_cli_io12write_stdout",
+  "--trace-symbol=_RNvCs9Xul1Kjr0QF_16libsignal_cli_io9read_file",
+  "--trace-symbol=_RNvMNtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB2_6Scalar20from_bytes_mod_order",
+  "--trace-symbol=_RNvMNtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB2_6Scalar25from_bytes_mod_order_wide",
+  "--trace-symbol=_RNvMNtCs9qUVZY45Yh2_9hashbrown3rawNtB2_11Fallibility17capacity_overflow",
+  "--trace-symbol=_RNvMNtCs9qUVZY45Yh2_9hashbrown3rawNtB2_11Fallibility9alloc_err",
+  "--trace-symbol=_RNvMNtCsf73KMPtv2x3_9hashbrown3rawNtB2_11Fallibility17capacity_overflow",
+  "--trace-symbol=_RNvMNtCsf73KMPtv2x3_9hashbrown3rawNtB2_11Fallibility9alloc_err",
+  "--trace-symbol=_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes3pk1",
+  "--trace-symbol=_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes3pk2",
+  "--trace-symbol=_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes9from_seed",
+  "--trace-symbol=_RNvMs0_NtNtNtCskxtBwYRO61I_4core2io5error4reprNtB5_4Repr10new_custom",
+  "--trace-symbol=_RNvMs0_NtNtNtNtCsfr5T3GFabw_3std3sys4sync4once5futexNtB5_4Once4call",
+  "--trace-symbol=_RNvMs1_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_11DebugStruct5field",
+  "--trace-symbol=_RNvMs1_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_11DebugStruct6finish",
+  "--trace-symbol=_RNvMs2_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_10DebugTuple5field",
+  "--trace-symbol=_RNvMs2_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_10DebugTuple6finish",
+  "--trace-symbol=_RNvMs5_NtCs2wR8L9wiBdT_16curve25519_dalek10montgomeryNtB5_15MontgomeryPoint10to_edwards",
+  "--trace-symbol=_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime11checked_add",
+  "--trace-symbol=_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime14duration_since",
+  "--trace-symbol=_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime3now",
+  "--trace-symbol=_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime7elapsed",
+  "--trace-symbol=_RNvMs5_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_9DebugList5entry",
+  "--trace-symbol=_RNvMs5_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_9DebugList6finish",
+  "--trace-symbol=_RNvMs6_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12StaticSecret14diffie_hellman",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter10debug_list",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter11debug_tuple",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter12debug_struct",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter25debug_tuple_field2_finish",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter26debug_struct_field1_finish",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter26debug_struct_field2_finish",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter3pad",
+  "--trace-symbol=_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter9write_str",
+  "--trace-symbol=_RNvMsa_NtNtNtCskxtBwYRO61I_4core3fmt3num3impm4__fmt",
+  "--trace-symbol=_RNvMsg_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint8compress",
+  "--trace-symbol=_RNvMsw_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint35vartime_double_scalar_mul_basepoint",
+  "--trace-symbol=_RNvMsx_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint15is_torsion_free",
+  "--trace-symbol=_RNvNCNKNvNvMNtNtCsfr5T3GFabw_3std4hash6randomNtBa_11RandomState3new4KEYS0s_023___RUST_STD_INTERNAL_VAL",
+  "--trace-symbol=_RNvNtCs69KKACWg7bl_5alloc5alloc18handle_alloc_error",
+  "--trace-symbol=_RNvNtCs69KKACWg7bl_5alloc7raw_vec12handle_error",
+  "--trace-symbol=_RNvNtCsbKnPy0UR4Ui_13signal_crypto7aes_cbc19aes_256_cbc_decrypt",
+  "--trace-symbol=_RNvNtCsbKnPy0UR4Ui_13signal_crypto7aes_cbc19aes_256_cbc_encrypt",
+  "--trace-symbol=_RNvNtCsbvWyylYiyxg_4sha26sha25611compress256",
+  "--trace-symbol=_RNvNtCsbvWyylYiyxg_4sha26sha51211compress512",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core3fmt17pointer_fmt_inner",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core3fmt5write",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core3str16slice_error_fail",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core6option13expect_failed",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core6option13unwrap_failed",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core6result13unwrap_failed",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core9panicking18panic_bounds_check",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core9panicking19assert_failed_inner",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core9panicking5panic",
+  "--trace-symbol=_RNvNtCskxtBwYRO61I_4core9panicking9panic_fmt",
+  "--trace-symbol=_RNvNtCslWItzXo2NmA_11cpufeatures7aarch6415getauxval_hwcap",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental12encapsulate1",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental12encapsulate2",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental17validate_pk_bytes",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental26decapsulate_compressed_key",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber11decapsulate",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber11encapsulate",
+  "--trace-symbol=_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber17generate_key_pair",
+  "--trace-symbol=_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback12GETRANDOM_FN",
+  "--trace-symbol=_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback17use_file_fallback",
+  "--trace-symbol=_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback4init",
+  "--trace-symbol=_RNvNtNtCs69KKACWg7bl_5alloc2io5error21custom_owner_from_box",
+  "--trace-symbol=_RNvNtNtCseLFX6RtqVKc_3aes4soft8fixslice14aes256_encrypt",
+  "--trace-symbol=_RNvNtNtCseLFX6RtqVKc_3aes4soft8fixslice19aes256_key_schedule",
+  "--trace-symbol=_RNvNtNtCsfr5T3GFabw_3std4sync9lazy_lock14panic_poisoned",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core3str8converts9from_utf8",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core5slice5index16slice_index_fail",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core5slice6memchr14memchr_aligned",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core5slice6memchr7memrchr",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_add_overflow",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_mul_overflow",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_shl_overflow",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow",
+  "--trace-symbol=_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const28panic_const_async_fn_resumed",
+  "--trace-symbol=_RNvNtNtNtCs40xgxkZUUew_9getrandom8backends8use_file9util_libc13last_os_error",
+  "--trace-symbol=_RNvNtNtNtCsfr5T3GFabw_3std3sys6random5linux19hashmap_random_keys",
+  "--trace-symbol=_RNvNtNtNtCskxtBwYRO61I_4core7unicode12unicode_data11white_space14WHITESPACE_MAP",
+  "--trace-symbol=_RNvNtNtNtNtCs2wR8L9wiBdT_16curve25519_dalek7backend6serial3u649constants23ED25519_BASEPOINT_TABLE",
+  "--trace-symbol=_RNvNvMs_NtCs69KKACWg7bl_5alloc3vecINtB6_3VecppE6remove13assert_failed",
+  "--trace-symbol=_RNvNvNtCs69KKACWg7bl_5alloc3fmt6format12format_inner",
+  "--trace-symbol=_RNvXNtNtNtCskxtBwYRO61I_4core3fmt3num3imphNtB6_7Display3fmt",
+  "--trace-symbol=_RNvXs0_NtCs4Dv7yoBiUx4_3log13___private_apiNtB5_12GlobalLoggerNtB7_3Log3log",
+  "--trace-symbol=_RNvXs12_NtNtCskxtBwYRO61I_4core3num7nonzeroINtB6_7NonZeroyENtNtNtBa_3str6traits7FromStr8from_str",
+  "--trace-symbol=_RNvXs6_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTimeINtNtNtCskxtBwYRO61I_4core3ops5arith3AddNtNtBR_4time8DurationE3add",
+  "--trace-symbol=_RNvXs6_NtNtCskxtBwYRO61I_4core3fmt3numjNtB7_8LowerHex3fmt",
+  "--trace-symbol=_RNvXs8_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_9PublicKeyINtNtCskxtBwYRO61I_4core7convert4FromRNtB5_12StaticSecretE4from",
+  "--trace-symbol=_RNvXs8_NtNtCskxtBwYRO61I_4core3fmt3numjNtB7_8UpperHex3fmt",
+  "--trace-symbol=_RNvXs8_NtNtNtCskxtBwYRO61I_4core3fmt3num3impmNtB9_7Display3fmt",
+  "--trace-symbol=_RNvXs9_NtNtNtCskxtBwYRO61I_4core3fmt3num3implNtB9_7Display3fmt",
+  "--trace-symbol=_RNvXsC_NtNtCskxtBwYRO61I_4core3fmt3numyNtB7_8LowerHex3fmt",
+  "--trace-symbol=_RNvXsE_NtNtCskxtBwYRO61I_4core3fmt3numyNtB7_8UpperHex3fmt",
+  "--trace-symbol=_RNvXsX_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsRNtNtB7_6scalar6ScalarINtNtNtCskxtBwYRO61I_4core3ops5arith3MulRNtB5_21EdwardsBasepointTableE3mul",
+  "--trace-symbol=_RNvXs_CsdZv6vxPi7MZ_3hexNtB4_15BytesToHexCharsNtNtNtNtCskxtBwYRO61I_4core4iter6traits8iterator8Iterator4next",
+  "--trace-symbol=_RNvXs_CsdZv6vxPi7MZ_3hexNtB4_15BytesToHexCharsNtNtNtNtCskxtBwYRO61I_4core4iter6traits8iterator8Iterator9size_hint",
+  "--trace-symbol=_RNvXs_NtCs40xgxkZUUew_9getrandom5errorNtB4_5ErrorNtNtCskxtBwYRO61I_4core3fmt5Debug3fmt",
+  "--trace-symbol=_RNvXsa_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12StaticSecretNtNtNtCskxtBwYRO61I_4core3ops4drop4Drop4drop",
+  "--trace-symbol=_RNvXsa_NtCskxtBwYRO61I_4core4timeNtB5_8DurationNtNtB7_3fmt5Debug3fmt",
+  "--trace-symbol=_RNvXsb_NtCskxtBwYRO61I_4core3fmtNtB5_9FormatterNtB5_5Write9write_str",
+  "--trace-symbol=_RNvXsd_NtNtNtCskxtBwYRO61I_4core3fmt3num3impyNtB9_7Display3fmt",
+  "--trace-symbol=_RNvXse_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12SharedSecretNtNtNtCskxtBwYRO61I_4core3ops4drop4Drop4drop",
+  "--trace-symbol=_RNvXse_NtNtCskxtBwYRO61I_4core3fmt3numhNtB7_8LowerHex3fmt",
+  "--trace-symbol=_RNvXsg_NtCskxtBwYRO61I_4core3fmtbNtB5_7Display3fmt",
+  "--trace-symbol=_RNvXsg_NtNtCskxtBwYRO61I_4core3fmt3numhNtB7_8UpperHex3fmt",
+  "--trace-symbol=_RNvXsh_NtCskxtBwYRO61I_4core3fmteNtB5_5Debug3fmt",
+  "--trace-symbol=_RNvXsi_NtCskxtBwYRO61I_4core3fmteNtB5_7Display3fmt",
+  "--trace-symbol=_RNvXsi_NtNtNtCskxtBwYRO61I_4core3fmt3num3impjNtB9_7Display3fmt",
+  "--trace-symbol=_RNvXsk_NtCsb2VjNdQ5690_8bitflags6traitsmNtNtB7_6parser8ParseHex9parse_hex",
+  "--trace-symbol=_RNvXsk_NtCskxtBwYRO61I_4core3fmtcNtB5_7Display3fmt",
+  "--trace-symbol=_RNvXso_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPointNtNtNtCskxtBwYRO61I_4core3ops5arith3Neg3neg",
+  "--trace-symbol=_RNvXsq_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_6Binary3fmt",
+  "--trace-symbol=_RNvXss_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_5Octal3fmt",
+  "--trace-symbol=_RNvXsu_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_8LowerHex3fmt",
+  "--trace-symbol=_RNvXsv_NtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB5_6ScalarNtNtNtCskxtBwYRO61I_4core3ops5arith3Mul3mul",
+  "--trace-symbol=_RNvXsv_NtNtCskxtBwYRO61I_4core3fmt3numlNtB7_8LowerHex3fmt",
+  "--trace-symbol=_RNvXsw_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_8UpperHex3fmt",
+  "--trace-symbol=_RNvXsx_NtNtCskxtBwYRO61I_4core3fmt3numlNtB7_8UpperHex3fmt",
+  "--trace-symbol=_RNvXsz_NtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB5_6ScalarNtNtNtCskxtBwYRO61I_4core3ops5arith3Add3add",
+  "--trace-symbol=__aarch64_cas8_acq_rel",
+  "--trace-symbol=__aarch64_ldadd8_rel",
+  "--trace-symbol=__aarch64_ldadd8_relax",
+  "--trace-symbol=bcmp",
+  "--trace-symbol=libsignal_session_rng_fill",
+  "--trace-symbol=memcmp",
+  "--trace-symbol=memcpy",
+  "--trace-symbol=memmove",
+  "--trace-symbol=memset",
+  "--trace-symbol=strlen",
+  "--trace-symbol=__errno_location",
+  "--trace-symbol=close",
+  "--trace-symbol=open",
+  "--trace-symbol=read",
+  "--trace-symbol=write",
+  "-o",
+  "libsignal-cli.elf",
+  "work/self-contained/crt1.o",
+  "work/self-contained/crti.o",
+  "work/self-contained/crtbegin.o",
+  "work/native/rdl_shim.o",
+  "work/native/extern_stubs_clean.o",
+  "work/lib0_0.o",
+  "work/lib0_1.o",
+  "work/lib0_2.o",
+  "work/lib0_3.o",
+  "work/lib0_4.o",
+  "work/lib0_5.o",
+  "work/lib0_6.o",
+  "work/lib0_7.o",
+  "work/lib0_8.o",
+  "work/lib0_9.o",
+  "work/lib0_10.o",
+  "work/lib0_11.o",
+  "work/lib0_12.o",
+  "work/lib1_0.o",
+  "--start-group",
+  "work/main_rust.o",
+  "work/self-contained/libc.a",
+  "work/compiler_builtins.a",
+  "work/self-contained/libunwind.a",
+  "--end-group",
+  "work/self-contained/crtend.o",
+  "work/self-contained/crtn.o",
+]
+
+[stock_lld_arg_files]
+"third_party/libsignal/libsignal-session/cli-elf/stock.ld" = "ddd8dd9df46f6ed840fe35ec185cd754cd82a2e18d608b5c6268779b1e5c4daa"
+
+[runtime_archives]
+"crt1.o" = "2c8595cff75b182ad59c0278d5f81bed2cf1e51b5bf9324db52142c89dd6479f"
+"crtbegin.o" = "522c4ac7628b80df407f1873be18b6b9b398db5be7f9f5586835cdfd189f6a9e"
+"crtend.o" = "9fd9518f8a0ba537a77c5d5c638ec30efa388a9458c21ad84f5607c535547adb"
+"crti.o" = "b49a67e2e36eed4836023fc26ff9da617e2020a2317aadfeb7971e4cbe612bf7"
+"crtn.o" = "b2f52a98df83f38814f34f7477aeb629d5e1fb1c1379ef2739cad91ab9ab8734"
+"libc.a" = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+"libunwind.a" = "06977ce3e033cf2c06fcbac9b25b7c9213c7b4aa09f2a4d4b4427fb809b9f203"
+
+[s2_real_body_lock.bcmp]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x468ba8"
+size = 4
+input_section = ".text.bcmp"
+source_file = "libc.a"
+archive_member = "bcmp.lo"
+sha256 = "9fdd6311a2502468ad67727017a186bc0189d78a58cc525e1466516f0408cba5"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "bcmp.lo"
+member_file_sha = "9fdd6311a2502468ad67727017a186bc0189d78a58cc525e1466516f0408cba5"
+matched_libc_member = "bcmp.lo"
+member_text_relocs = 1
+text_sha = "a7911cdfdc28e6a1867e359ba426081aacfa692fdeb3e978d2a68dd924fa8c3e"
+body_sha256 = "49e2198ec504754f77fdd1d2977c13cdac39abd18c1b2a410f9ae6345000eb51"
+relocs = [
+  { offset = 0, rel_offset = 0, r_type = 282, rtype = 282, target_symbol = "memcmp", target = "memcmp", addend = 0 },
+]
+
+[s2_real_body_lock.memcmp]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x468b74"
+size = 52
+input_section = ".text.memcmp"
+source_file = "libc.a"
+archive_member = "memcmp.lo"
+sha256 = "6c4bd001de16c86defb61ee0e8e62b53987a6d0e5e72637cf73df46b81fe3f4a"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "memcmp.lo"
+member_file_sha = "6c4bd001de16c86defb61ee0e8e62b53987a6d0e5e72637cf73df46b81fe3f4a"
+matched_libc_member = "memcmp.lo"
+member_text_relocs = 0
+text_sha = "292e7a7fee0451387e07735f24b56ca03fc0c3a048cdda1692a0154a55e1bf33"
+body_sha256 = "292e7a7fee0451387e07735f24b56ca03fc0c3a048cdda1692a0154a55e1bf33"
+relocs = []
+
+[s2_real_body_lock.memcpy]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x469650"
+size = 396
+input_section = ".text"
+source_file = "libc.a"
+archive_member = "memcpy.lo"
+sha256 = "1264ddb7eca435a24ef713ef3c201a0118429e91c66b0b0d187ca786534ba7b5"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "memcpy.lo"
+member_file_sha = "1264ddb7eca435a24ef713ef3c201a0118429e91c66b0b0d187ca786534ba7b5"
+matched_libc_member = "memcpy.lo"
+member_text_relocs = 0
+text_sha = "c0734e8f428146fcf55f78b9ec07ae4634db888898fd0239c1f5376907318b3c"
+body_sha256 = "c0734e8f428146fcf55f78b9ec07ae4634db888898fd0239c1f5376907318b3c"
+byte_equal = true
+relocs = []
+
+[s2_real_body_lock.memmove]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x468a4c"
+size = 296
+input_section = ".text.memmove"
+source_file = "libc.a"
+archive_member = "memmove.lo"
+sha256 = "1e57042165b65670bd83a6fba77a375595b5a444a6d5b611ced91e60bf0be4de"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "memmove.lo"
+member_file_sha = "1e57042165b65670bd83a6fba77a375595b5a444a6d5b611ced91e60bf0be4de"
+matched_libc_member = "memmove.lo"
+member_text_relocs = 1
+text_sha = "c12d467225cb80b716bf2937af29adf446439046c9ff9a980eb4c4daf6875508"
+body_sha256 = "29f73b1800a3451387a2493ccfc81f74c325d4d73dd81f7adbd98c9a7a2ecc32"
+relocs = [
+  { offset = 104, rel_offset = 104, r_type = 282, rtype = 282, target_symbol = "memcpy", target = "memcpy", addend = 0 },
+]
+
+[s2_real_body_lock.memset]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x4697e0"
+size = 260
+input_section = ".text"
+source_file = "libc.a"
+archive_member = "memset.lo"
+sha256 = "51971558cc2d0677a192f9a3df86d2ee802b91d6d10ade153ce3a371ad845b95"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "memset.lo"
+member_file_sha = "51971558cc2d0677a192f9a3df86d2ee802b91d6d10ade153ce3a371ad845b95"
+matched_libc_member = "memset.lo"
+member_text_relocs = 0
+text_sha = "2a52240d821daa128ae5807efe5c891560354e39f06b1b92d992e229112cbe49"
+body_sha256 = "2a52240d821daa128ae5807efe5c891560354e39f06b1b92d992e229112cbe49"
+byte_equal = true
+relocs = []
+
+[s2_real_body_lock.strlen]
+definer_class = "R"
+input_binding = "STB_GLOBAL"
+elf_addr = "0x468bac"
+size = 88
+input_section = ".text.strlen"
+source_file = "libc.a"
+archive_member = "strlen.lo"
+sha256 = "485bad76aa759b278a152412850885ad84fab30893998d18337c2d1d1d56ec81"
+archive_sha256 = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+archive_sha = "b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f"
+member_name = "strlen.lo"
+member_file_sha = "485bad76aa759b278a152412850885ad84fab30893998d18337c2d1d1d56ec81"
+matched_libc_member = "strlen.lo"
+member_text_relocs = 0
+text_sha = "571c771cac9cac1c9fd88c8e866dd609ce09c23f158e4817e8dab007c93ba1ec"
+body_sha256 = "571c771cac9cac1c9fd88c8e866dd609ce09c23f158e4817e8dab007c93ba1ec"
+byte_equal = true
+relocs = []
+
+[d1_extern_data_lock]
+total_proved_extern_data = 4
+gc_dead = [
+  "_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback12GETRANDOM_FN",
+  "_RNvNtNtNtCskxtBwYRO61I_4core7unicode12unicode_data11white_space14WHITESPACE_MAP",
+]
+gc_dead_demangled = [
+  "core::unicode::unicode_data::white_space::WHITESPACE_MAP",
+  "getrandom::backends::linux_android_with_fallback::GETRANDOM_FN",
+]
+
+[d1_extern_data_lock.kept."_RNvCs4Dv7yoBiUx4_3log20MAX_LOG_LEVEL_FILTER"]
+demangled_name = "log::MAX_LOG_LEVEL_FILTER"
+definer_class = "Z"
+definer_kind = "stub_object"
+elf_addr = "0x46f020"
+size = 8
+input_section = ".data._RNvCs4Dv7yoBiUx4_3log20MAX_LOG_LEVEL_FILTER"
+source_file = "extern_stubs_clean.o"
+sha256 = "ea88d803608b5fcb1c9bbec41a273d5121ff2735af5bc927ea9fb18b1d253573"
+
+[d1_extern_data_lock.kept."_RNvNtNtNtNtCs2wR8L9wiBdT_16curve25519_dalek7backend6serial3u649constants23ED25519_BASEPOINT_TABLE"]
+demangled_name = "curve25519_dalek::backend::serial::u64::constants::ED25519_BASEPOINT_TABLE"
+definer_class = "Z"
+definer_kind = "stub_object"
+elf_addr = "0x46f028"
+size = 8
+input_section = ".data._RNvNtNtNtNtCs2wR8L9wiBdT_16curve25519_dalek7backend6serial3u649constants23ED25519_BASEPOINT_TABLE"
+source_file = "extern_stubs_clean.o"
+sha256 = "ea88d803608b5fcb1c9bbec41a273d5121ff2735af5bc927ea9fb18b1d253573"
+
+[[stub_manifest]]
+name = "_RINvCsdqpLrhraQXi_6subtle9black_boxhECs2wR8L9wiBdT_16curve25519_dalek"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RINvNtCskxtBwYRO61I_4core9panicking13assert_failedjjEB4_"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RINvNtCskxtBwYRO61I_4core9panicking13assert_failedyyEB4_"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvCs4Dv7yoBiUx4_3log20MAX_LOG_LEVEL_FILTER"
+kind = "object_rw8"
+size = 8
+
+[[stub_manifest]]
+name = "_RNvCs65XVORQObL2_12libcrux_hmac4hmac"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB2_6Scalar20from_bytes_mod_order"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB2_6Scalar25from_bytes_mod_order_wide"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCs9qUVZY45Yh2_9hashbrown3rawNtB2_11Fallibility17capacity_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCs9qUVZY45Yh2_9hashbrown3rawNtB2_11Fallibility9alloc_err"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCsf73KMPtv2x3_9hashbrown3rawNtB2_11Fallibility17capacity_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMNtCsf73KMPtv2x3_9hashbrown3rawNtB2_11Fallibility9alloc_err"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes3pk1"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes3pk2"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs0_NtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incrementalNtB5_22KeyPairCompressedBytes9from_seed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs0_NtNtNtCskxtBwYRO61I_4core2io5error4reprNtB5_4Repr10new_custom"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs0_NtNtNtNtCsfr5T3GFabw_3std3sys4sync4once5futexNtB5_4Once4call"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs1_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_11DebugStruct5field"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs1_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_11DebugStruct6finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs2_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_10DebugTuple5field"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs2_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_10DebugTuple6finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtCs2wR8L9wiBdT_16curve25519_dalek10montgomeryNtB5_15MontgomeryPoint10to_edwards"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime11checked_add"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime14duration_since"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime3now"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTime7elapsed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_9DebugList5entry"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs5_NtNtCskxtBwYRO61I_4core3fmt8buildersNtB5_9DebugList6finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMs6_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12StaticSecret14diffie_hellman"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter10debug_list"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter11debug_tuple"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter12debug_struct"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter25debug_tuple_field2_finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter26debug_struct_field1_finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter26debug_struct_field2_finish"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter3pad"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtCskxtBwYRO61I_4core3fmtNtB5_9Formatter9write_str"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsa_NtNtNtCskxtBwYRO61I_4core3fmt3num3impm4__fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsg_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint8compress"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsw_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint35vartime_double_scalar_mul_basepoint"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvMsx_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPoint15is_torsion_free"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNCNKNvNvMNtNtCsfr5T3GFabw_3std4hash6randomNtBa_11RandomState3new4KEYS0s_023___RUST_STD_INTERNAL_VAL"
+kind = "tls_object"
+size = 16
+
+[[stub_manifest]]
+name = "_RNvNtCs69KKACWg7bl_5alloc5alloc18handle_alloc_error"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCs69KKACWg7bl_5alloc7raw_vec12handle_error"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCsbKnPy0UR4Ui_13signal_crypto7aes_cbc19aes_256_cbc_decrypt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCsbKnPy0UR4Ui_13signal_crypto7aes_cbc19aes_256_cbc_encrypt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCsbvWyylYiyxg_4sha26sha25611compress256"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCsbvWyylYiyxg_4sha26sha51211compress512"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core3fmt17pointer_fmt_inner"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core3fmt5write"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core3str16slice_error_fail"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core6option13expect_failed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core6option13unwrap_failed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core6result13unwrap_failed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core9panicking18panic_bounds_check"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core9panicking19assert_failed_inner"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core9panicking5panic"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCskxtBwYRO61I_4core9panicking9panic_fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtCslWItzXo2NmA_11cpufeatures7aarch6415getauxval_hwcap"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental12encapsulate1"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental12encapsulate2"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental17validate_pk_bytes"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem8mlkem76811incremental26decapsulate_compressed_key"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber11decapsulate"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber11encapsulate"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs1mK0QScfTrZ_14libcrux_ml_kem9mlkem10245kyber17generate_key_pair"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback12GETRANDOM_FN"
+kind = "object_rw8"
+size = 8
+
+[[stub_manifest]]
+name = "_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback17use_file_fallback"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs40xgxkZUUew_9getrandom8backends27linux_android_with_fallback4init"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCs69KKACWg7bl_5alloc2io5error21custom_owner_from_box"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCseLFX6RtqVKc_3aes4soft8fixslice14aes256_encrypt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCseLFX6RtqVKc_3aes4soft8fixslice19aes256_key_schedule"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCsfr5T3GFabw_3std4sync9lazy_lock14panic_poisoned"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core3str8converts9from_utf8"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core5slice5index16slice_index_fail"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core5slice6memchr14memchr_aligned"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core5slice6memchr7memrchr"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_add_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_mul_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_shl_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const24panic_const_sub_overflow"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtCskxtBwYRO61I_4core9panicking11panic_const28panic_const_async_fn_resumed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtNtCs40xgxkZUUew_9getrandom8backends8use_file9util_libc13last_os_error"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtNtCsfr5T3GFabw_3std3sys6random5linux19hashmap_random_keys"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNtNtNtCskxtBwYRO61I_4core7unicode12unicode_data11white_space14WHITESPACE_MAP"
+kind = "object_rw256"
+size = 256
+
+[[stub_manifest]]
+name = "_RNvNtNtNtNtCs2wR8L9wiBdT_16curve25519_dalek7backend6serial3u649constants23ED25519_BASEPOINT_TABLE"
+kind = "object_rw8"
+size = 8
+
+[[stub_manifest]]
+name = "_RNvNvMs_NtCs69KKACWg7bl_5alloc3vecINtB6_3VecppE6remove13assert_failed"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvNvNtCs69KKACWg7bl_5alloc3fmt6format12format_inner"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXNtNtNtCskxtBwYRO61I_4core3fmt3num3imphNtB6_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs0_NtCs4Dv7yoBiUx4_3log13___private_apiNtB5_12GlobalLoggerNtB7_3Log3log"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs12_NtNtCskxtBwYRO61I_4core3num7nonzeroINtB6_7NonZeroyENtNtNtBa_3str6traits7FromStr8from_str"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs6_NtCsfr5T3GFabw_3std4timeNtB5_10SystemTimeINtNtNtCskxtBwYRO61I_4core3ops5arith3AddNtNtBR_4time8DurationE3add"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs6_NtNtCskxtBwYRO61I_4core3fmt3numjNtB7_8LowerHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs8_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_9PublicKeyINtNtCskxtBwYRO61I_4core7convert4FromRNtB5_12StaticSecretE4from"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs8_NtNtCskxtBwYRO61I_4core3fmt3numjNtB7_8UpperHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs8_NtNtNtCskxtBwYRO61I_4core3fmt3num3impmNtB9_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs9_NtNtNtCskxtBwYRO61I_4core3fmt3num3implNtB9_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsC_NtNtCskxtBwYRO61I_4core3fmt3numyNtB7_8LowerHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsE_NtNtCskxtBwYRO61I_4core3fmt3numyNtB7_8UpperHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsX_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsRNtNtB7_6scalar6ScalarINtNtNtCskxtBwYRO61I_4core3ops5arith3MulRNtB5_21EdwardsBasepointTableE3mul"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs_CsdZv6vxPi7MZ_3hexNtB4_15BytesToHexCharsNtNtNtNtCskxtBwYRO61I_4core4iter6traits8iterator8Iterator4next"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs_CsdZv6vxPi7MZ_3hexNtB4_15BytesToHexCharsNtNtNtNtCskxtBwYRO61I_4core4iter6traits8iterator8Iterator9size_hint"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXs_NtCs40xgxkZUUew_9getrandom5errorNtB4_5ErrorNtNtCskxtBwYRO61I_4core3fmt5Debug3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsa_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12StaticSecretNtNtNtCskxtBwYRO61I_4core3ops4drop4Drop4drop"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsa_NtCskxtBwYRO61I_4core4timeNtB5_8DurationNtNtB7_3fmt5Debug3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsb_NtCskxtBwYRO61I_4core3fmtNtB5_9FormatterNtB5_5Write9write_str"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsd_NtNtNtCskxtBwYRO61I_4core3fmt3num3impyNtB9_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXse_NtCscSWoUTnaXmu_12x25519_dalek6x25519NtB5_12SharedSecretNtNtNtCskxtBwYRO61I_4core3ops4drop4Drop4drop"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXse_NtNtCskxtBwYRO61I_4core3fmt3numhNtB7_8LowerHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsg_NtCskxtBwYRO61I_4core3fmtbNtB5_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsg_NtNtCskxtBwYRO61I_4core3fmt3numhNtB7_8UpperHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsh_NtCskxtBwYRO61I_4core3fmteNtB5_5Debug3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsi_NtCskxtBwYRO61I_4core3fmteNtB5_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsi_NtNtNtCskxtBwYRO61I_4core3fmt3num3impjNtB9_7Display3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsk_NtCsb2VjNdQ5690_8bitflags6traitsmNtNtB7_6parser8ParseHex9parse_hex"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsk_NtCskxtBwYRO61I_4core3fmtcNtB5_7Display3fmt"
+kind = "object_rw256"
+size = 256
+
+[[stub_manifest]]
+name = "_RNvXso_NtCs2wR8L9wiBdT_16curve25519_dalek7edwardsNtB5_12EdwardsPointNtNtNtCskxtBwYRO61I_4core3ops5arith3Neg3neg"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsq_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_6Binary3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXss_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_5Octal3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsu_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_8LowerHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsv_NtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB5_6ScalarNtNtNtCskxtBwYRO61I_4core3ops5arith3Mul3mul"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsv_NtNtCskxtBwYRO61I_4core3fmt3numlNtB7_8LowerHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsw_NtNtCskxtBwYRO61I_4core3fmt3nummNtB7_8UpperHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsx_NtNtCskxtBwYRO61I_4core3fmt3numlNtB7_8UpperHex3fmt"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "_RNvXsz_NtCs2wR8L9wiBdT_16curve25519_dalek6scalarNtB5_6ScalarNtNtNtCskxtBwYRO61I_4core3ops5arith3Add3add"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "__aarch64_cas8_acq_rel"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "__aarch64_ldadd8_rel"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "__aarch64_ldadd8_relax"
+kind = "function_udf0"
+size = 4
+
+[[stub_manifest]]
+name = "libsignal_session_rng_fill"
+kind = "function_udf0"
+size = 4

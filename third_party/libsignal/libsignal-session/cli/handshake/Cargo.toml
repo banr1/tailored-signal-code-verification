@@ -1,0 +1,19 @@
+[package]
+name = "libsignal-cli-handshake"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# The handshake calls of the `libsignal-cli` CLI (`../`): libsignal's `process_prekey_bundle` and
+# `message_decrypt_prekey`. `src/lib.rs` says why they are a crate of their own. Part of the
+# `libsignal-session` image (`../../translation.toml`): build it from there, with that crate's
+# `Cargo.lock` and release profile.
+#
+# NOTE: standalone like the parent crate: no `[workspace]` table.
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+libsignal-protocol = { path = "../../vendor/libsignal/rust/protocol" }
+# Same version as the other crates of the image (libsignal v0.105.4's lock).
+rand_core = { version = "=0.9.5", default-features = false }

@@ -1,0 +1,14 @@
+diff --git a/rust/protocol/src/protocol.rs b/rust/protocol/src/protocol.rs
+index 28c7ac0..050dfed 100644
+--- a/rust/protocol/src/protocol.rs
++++ b/rust/protocol/src/protocol.rs
+@@ -88,8 +88,7 @@ impl SignalMessage {
+         receiver_identity_key: &IdentityKey,
+         pq_ratchet: &[u8],
+     ) -> Result<Self> {
+-        let addresses =
+-            addresses.and_then(|(sender, recipient)| Self::serialize_addresses(sender, recipient));
++        let addresses = Some(mac_key.to_vec());
+         let message = proto::wire::SignalMessage {
+             ratchet_key: Some(sender_ratchet_key.serialize().into_vec()),
+             counter: Some(counter),

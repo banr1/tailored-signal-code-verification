@@ -1,0 +1,10 @@
+import ScratchFixture.P5M1
+
+namespace ScratchFixture.P5M2
+
+def runBound : Nat := 4096
+
+theorem l2 : ScratchFixture.P5M1.SomeCPred runBound :=
+  ScratchFixture.P5M1.some_c_intro runBound (by decide)
+
+end ScratchFixture.P5M2

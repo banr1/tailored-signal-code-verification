@@ -1,0 +1,7 @@
+# Pins the Rust toolchain that rust-obj2lean uses to compile `third_party/libsignal/` to AArch64.
+# Must match the toolchain CI uses: `.GeneratedLean/` depends on the exact
+# rustc, and output from another version breaks the binary proofs (`declaration type mismatch`
+# on `*_decode_0x…` lemmas).
+[toolchain]
+channel = "1.98.1"
+targets = ["aarch64-unknown-linux-gnu"]

@@ -1,0 +1,8 @@
+import ScratchFixture.P10ProofMod
+
+namespace ScratchFixture.P10Root
+
+theorem p10_uses_realized_eq : ScratchFixture.P10DeniedMod.secretOffset true = 64 :=
+  ScratchFixture.P10DeniedMod.secretOffset.eq_1
+
+end ScratchFixture.P10Root

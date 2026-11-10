@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Download, checksum-verify, and cache a pinned static `qemu-aarch64` (QEMU user mode) binary,
+# then print its absolute path on stdout.
+#
+# `tools/proc-snapshot` runs AArch64 Linux ELFs under qemu-aarch64 user mode with its gdbstub
+# (`-g <port>`) to dump process snapshots. The runner is part of the trusted base of a
+# snapshot, so we pin exactly one build: Debian's `qemu-user` package (static-pie since trixie;
+# `qemu-user-static` is now a transitional package with symlinks only). Both the `.deb` and the
+# extracted binary are SHA-256 verified; any mismatch is a hard error.
+#
+# Usage:
+#   scripts/fetch-qemu-aarch64 [--force]
+#
+#   --force      re-download and re-extract even if the cached binary verifies.
+#   -h, --help   show this help message and exit.
+#
+# Examples:
+#   QEMU="$(scripts/fetch-qemu-aarch64)" && "$QEMU" --version
+#
+# The binary is cached at
+# `${XDG_CACHE_HOME:-~/.cache}/arm64-verification-engine/qemu/<version>/qemu-aarch64`
+# (override the root with `$ARM64_UPSTREAM_CACHE`), shared by all worktrees. Re-runs only
+# re-hash the cached binary. Requires `curl`, `sha256sum`, and `dpkg-deb` or `ar` + `tar`.
+set -euo pipefail
+
+QEMU_VERSION="10.0.13+ds-0+deb13u1"
+DEB_NAME="qemu-user_${QEMU_VERSION}_amd64.deb"
+DEB_SHA256="ca6ede739327a20ae5a3498230c8a3a9a072c586e131bc6bcc1201eb1725e336"
+BIN_SHA256="73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943"
+# Primary: Debian trixie pool. Fallback: snapshot.debian.org content-addressed (by SHA-1) URL,
+# which stays valid after the pool drops this version.
+URLS=(
+  "https://deb.debian.org/debian/pool/main/q/qemu/qemu-user_10.0.13%2Bds-0%2Bdeb13u1_amd64.deb"
+  "https://snapshot.debian.org/file/dec1373851d29f91642c197f4a339d0d2ad25ed0/qemu-user_10.0.13%2Bds-0%2Bdeb13u1_amd64.deb"
+)
+
+CACHE="${ARM64_UPSTREAM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/arm64-verification-engine}"
+DEST_DIR="$CACHE/qemu/$QEMU_VERSION"
+DEST="$DEST_DIR/qemu-aarch64"
+
+log() { echo "fetch-qemu-aarch64: $*" >&2; }
+die() { log "error: $*"; exit 1; }
+
+ORIG_ARGS=("$@")
+FORCE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=1 ;;
+    -h|--help) sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0"; exit 0 ;;
+    *) die "unknown argument: $1 (see --help)" ;;
+  esac
+  shift
+done
+
+sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+if [ "$FORCE" = 0 ] && [ -x "$DEST" ] && [ "$(sha_of "$DEST")" = "$BIN_SHA256" ]; then
+  echo "$DEST"
+  exit 0
+fi
+
+mkdir -p "$DEST_DIR"
+if command -v flock >/dev/null 2>&1 && [ "${FETCH_QEMU_LOCKED:-0}" != 1 ]; then
+  exec env FETCH_QEMU_LOCKED=1 flock "$DEST_DIR/.fetch.lock" "$0" "${ORIG_ARGS[@]}"
+fi
+TMP="$(mktemp -d "$DEST_DIR/.fetch.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+
+ok=0
+for url in "${URLS[@]}"; do
+  log "downloading $url"
+  if curl -fsSL --retry 3 -o "$TMP/$DEB_NAME" "$url"; then
+    got="$(sha_of "$TMP/$DEB_NAME")"
+    if [ "$got" = "$DEB_SHA256" ]; then ok=1; break; fi
+    log "sha256 mismatch for $url: got $got, want $DEB_SHA256"
+  else
+    log "download failed: $url"
+  fi
+done
+[ "$ok" = 1 ] || die "could not fetch a verified $DEB_NAME"
+
+mkdir -p "$TMP/x"
+if command -v dpkg-deb >/dev/null 2>&1; then
+  dpkg-deb -x "$TMP/$DEB_NAME" "$TMP/x"
+else
+  (cd "$TMP" && ar x "$DEB_NAME" && tar -xf data.tar.* -C x ./usr/bin/qemu-aarch64)
+fi
+got="$(sha_of "$TMP/x/usr/bin/qemu-aarch64")"
+[ "$got" = "$BIN_SHA256" ] || die "extracted qemu-aarch64 sha256 $got, want $BIN_SHA256"
+chmod 0755 "$TMP/x/usr/bin/qemu-aarch64"
+mv -f "$TMP/x/usr/bin/qemu-aarch64" "$DEST"
+"$DEST" --version >/dev/null || die "$DEST --version failed"
+log "installed $("$DEST" --version | head -n1)"
+echo "$DEST"

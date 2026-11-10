@@ -1,0 +1,34 @@
+# Translation configuration for unmodified stock musl v1.2.5 mallocng bundled in
+# the pinned Rust 1.98.1 aarch64-unknown-linux-musl sysroot (`self-contained/libc.a`,
+# SHA-256 b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f).
+
+obj_name = "mallocng"
+namespace_prefix = "VerifiedLibraries.Mallocng.Generated"
+obj_file = "Mallocng/Generated/MallocngObj.lean"
+title = "musl v1.2.5 mallocng standard-library C allocator (bundled in Rust 1.98.1 aarch64-unknown-linux-musl libc.a)"
+hashed_inputs = [
+    "build.sh",
+    "common_bss.s",
+]
+license_header = [
+    "Copyright (c) 2005-2020 Rich Felker, et al.",
+    "Licensed under the MIT license (musl v1.2.5, bundled in Rust 1.98.1 aarch64-unknown-linux-musl self-contained/libc.a).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/mallocng_libca.o"]
+
+[native_compiler]
+zig_version = "0.16.0"
+
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "malloc",
+    "free",
+    "calloc",
+    "realloc",
+    "aligned_alloc",
+    "posix_memalign",
+]

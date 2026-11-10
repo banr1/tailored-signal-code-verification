@@ -1,0 +1,54 @@
+# Proof-dependency run exact per-constant `[MODEL]` allow-list (`Symbolic/scripts/machine_free_allow_proofdeps.txt`).
+# Signed by GK row 100 (initial 4 + 3 pre-signed SpqrModel projections; `SpqrModel.spqr`, also pre-signed by
+# row 100, added under GK row 219au) and row 109 (A1-ext 23 entries). 31 entries.
+# Used ONLY by the proof-dependency run (`--criterion`, `--emit-proofdeps`, `--check-proofdeps`, `--root-report`),
+# NEVER by the frozen CLI statement run (`Symbolic/scripts/machine_free_allow.txt`).
+# If any pinned source file changes blob, `machine_free_check.py` fails closed (exit 1) until re-signed.
+# blob-pin: LibsignalBinary/Specifications/LibsignalTripleRatchetRepr.lean = e1b0ceb39e3a3afd4b546809ac9a729fabf98835
+# blob-pin: LibsignalBinary/Specifications/LibsignalAesCbc.lean = c069e18e7a9c23c24482f53b68c21af4e8368993
+# blob-pin: LibsignalBinary/Specifications/LibsignalTripleRatchet.lean = 390f93c1c403c17a88fff553749bb01e65394ae9
+# Re-pinned after dead-declaration removal; no pinned constant changed; approved by swarat.
+# Re-pinned again after the trust-banner edit of #808: one comment line changed in each of LibsignalTripleRatchetRepr.lean and LibsignalAesCbc.lean; no line moved, no pinned constant changed.
+# Re-pinned after the computational-TCB rename (`scripts/rename_computational_tcb.tsv`): identifier renames in all three files, no line added or removed, no pinned constant renamed or changed.
+# Re-pinned again after the TCB docstring rewrite: comment-only edits to all three files; code lines shifted (l.NNN references below remapped), no pinned constant changed.
+# Re-pinned after the Lean module-system port (#831): `module` / `public import` / `import all` header lines and `@[expose] public section` added; l.NNN references below shifted accordingly; no pinned constant changed.
+# Re-pinned after the `lake shake` import narrowing: header import lines only (LibsignalTripleRatchetRepr: `-- shake: keep` comment on 1 import; LibsignalTripleRatchet: 2 `public import` lines removed, so l.NNN references below shift by −2); no pinned constant changed (GK ledger rows 84/85: statement hashes identical).
+# Re-pinned after merging #846 onto the import-narrowed main; proof-side definitions moved to *ProofDefs and unused open removed (l.NNN references below remapped by declaration); no pinned constant changed.
+# require-tag: [MODEL]
+
+# --- LibsignalTripleRatchet.lean @ 390f93c1c403c17a88fff553749bb01e65394ae9 (GK row 100) ---
+CryptoVerification.LibsignalTripleRatchet.SpqrModel : [MODEL] row 100 l.415 pure SPQR protocol model record over byte lists; no memory/layout/hook
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.mk : [MODEL] row 100 l.415 constructor of pure SpqrModel record; no memory/layout/hook
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.send : [MODEL] row 100 l.415 projection SpqrModel.send (pure byte-list step); no memory/layout/hook
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.recv : [MODEL] row 100 pre-signed l.415 projection SpqrModel.recv (pure byte-list step); reached by PqDir*
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.recvPanics : [MODEL] row 100 pre-signed l.415 projection SpqrModel.recvPanics (pure Bool predicate); reached by PqDir*
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.sendPanics : [MODEL] row 100 pre-signed l.415 projection SpqrModel.sendPanics (pure Bool predicate); reached by PqDir*
+CryptoVerification.LibsignalTripleRatchet.SeedsLen32 : [MODEL] row 100 l.682 pure length=32 predicate on model SessionState seeds; no memory/layout/hook
+CryptoVerification.LibsignalTripleRatchet.SpqrModel.spqr : [MODEL] row 100 pre-signed l.424 Spqr instance built from SpqrModel's pure fields (init := fun _ _ => [], send, recv, sendPanics, recvPanics); no memory/layout/hook; added under GK row 219au
+
+# --- LibsignalTripleRatchetRepr.lean @ e1b0ceb39e3a3afd4b546809ac9a729fabf98835 (GK row 109 A1-ext) ---
+CryptoVerification.LibsignalTripleRatchetRepr.utf8 : [MODEL] l.110 String literal -> its UTF-8 bytes (String.toUTF8 mapped to BitVec 8); pure
+CryptoVerification.LibsignalTripleRatchetRepr.UuidParser : [MODEL] l.316 abbrev type List (BitVec 8) -> Option (List.Vector (BitVec 8) 16); no term content
+CryptoVerification.LibsignalTripleRatchetRepr.ServiceIdParser : [MODEL] l.312 abbrev type List (BitVec 8) -> Option (Bool x List.Vector (BitVec 8) 16); no term content
+CryptoVerification.LibsignalTripleRatchetRepr.hexNibble : [MODEL] l.339 one hex digit byte -> its nibble or none (BitVec 8 sub/or/compare); pure
+CryptoVerification.LibsignalTripleRatchetRepr.decodeHex : [MODEL] l.346 structural recursion on List (BitVec 8): pairs of hex digits -> bytes (Option monad); pure
+CryptoVerification.LibsignalTripleRatchetRepr.decodeHex._f : [MODEL] compiler-generated structural-recursion functional of decodeHex (l.346); same body
+CryptoVerification.LibsignalTripleRatchetRepr.decodeHex.match_1 : [MODEL] compiler-generated matcher of decodeHex's pattern `hi :: lo :: rest | _` (l.347-352)
+CryptoVerification.LibsignalTripleRatchetRepr.decodeHex._sparseCasesOn_1 : [MODEL] compiler-generated List casesOn helper of decodeHex's match (l.347-352)
+CryptoVerification.LibsignalTripleRatchetRepr.decodeHex32 : [MODEL] l.355 decodeHex then length-16 check -> List.Vector (BitVec 8) 16; pure
+CryptoVerification.LibsignalTripleRatchetRepr.parseSimple : [MODEL] l.359 32-byte input -> decodeHex32; pure
+CryptoVerification.LibsignalTripleRatchetRepr.hyphen : [MODEL] l.363 the byte 0x2d ('-'); constant data
+CryptoVerification.LibsignalTripleRatchetRepr.parseHyphenated : [MODEL] l.367 36-byte input with '-' at 8/13/18/23 -> decodeHex32 of the 32 digits (List take/drop/getElem?); pure
+CryptoVerification.LibsignalTripleRatchetRepr.urnPrefix : [MODEL] l.375 utf8 "urn:uuid:"; constant data
+CryptoVerification.LibsignalTripleRatchetRepr.uuidTryParse : [MODEL] l.379 uuid::Uuid::try_parse by input length 32/36/38/45 -> parseSimple / parseHyphenated; pure
+CryptoVerification.LibsignalTripleRatchetRepr.pniPrefix : [MODEL] l.394 utf8 "PNI:"; constant data
+CryptoVerification.LibsignalTripleRatchetRepr.hyphenatedLength : [MODEL] l.403 the Nat 36; constant data
+CryptoVerification.LibsignalTripleRatchetRepr.tryParseHyphenated : [MODEL] l.407 length = 36 then the given UuidParser else none; pure
+CryptoVerification.LibsignalTripleRatchetRepr.serviceIdParse : [MODEL] l.417 strip "PNI:" prefix (List.isPrefixOf/drop) then tryParseHyphenated, tagged Bool; pure
+CryptoVerification.LibsignalTripleRatchetRepr.kindByte : [MODEL] l.427 Bool -> 1#8 / 0#8; pure (docstring cites offsets, body does not)
+CryptoVerification.LibsignalTripleRatchetRepr.addrBytes : [MODEL] l.431 kind byte :: uuid bytes ++ [device]; pure list construction
+
+# --- LibsignalAesCbc.lean @ c069e18e7a9c23c24482f53b68c21af4e8368993 (GK row 109 A1-ext) ---
+CryptoVerification.LibsignalAesCbc.toLEBytes : [MODEL] l.49 the n little-endian bytes of a BitVec (List.ofFn of extractLsb'); pure; already trusted as statement text of libsignal_binary_e2e (file banner)
+CryptoVerification.LibsignalAesCbc.blockToBytes : [MODEL] l.53 abbrev toLEBytes 16 on a CBC Block; pure
+CryptoVerification.LibsignalAesCbc.bytesToKey : [MODEL] l.56 foldr shift/or of bytes into a 256-bit AesKey; pure

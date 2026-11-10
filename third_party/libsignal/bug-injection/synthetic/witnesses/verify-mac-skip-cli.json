@@ -1,0 +1,23 @@
+{
+  "comment": "Synthetic mutant for Issue 7 (SignalMessage::verify_mac returns Ok(true) without checking the 8-byte MAC tag): Alice initiates and sends a pre-key message; the attacker corrupts the 8-byte MAC tag following Bob's serialized address in the inner SignalMessage, and the mutant accepts it.",
+  "setup_seed": 5001,
+  "rng_seed": 50010,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"hex": "0000000000000000000000000000000000000000000000000000000000000000"}},
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "replace": {"message_of": 1},
+        "find": {
+          "slice": {"message_of": 1},
+          "after": {"hex": "5d3e2f107a8b4c9d8e0fa1b2c3d4e5f601"},
+          "offset": 0,
+          "len": 25
+        },
+        "with": {"hex": "5d3e2f107a8b4c9d8e0fa1b2c3d4e5f601ffffffffffffffff"}
+      }
+    }
+  ]
+}

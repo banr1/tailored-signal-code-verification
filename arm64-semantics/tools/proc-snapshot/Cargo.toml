@@ -1,0 +1,20 @@
+[package]
+name = "proc-snapshot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Trusted process-snapshot dumper: runs an AArch64 Linux ELF under qemu-aarch64 user mode and
+# dumps its memory regions and registers at exec entry and at `main` via the GDB stub.
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+object = "0.36"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

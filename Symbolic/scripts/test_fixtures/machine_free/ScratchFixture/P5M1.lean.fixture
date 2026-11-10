@@ -1,0 +1,10 @@
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.P5M1
+
+def SomeCPred (n : Nat) : Prop := ∀ (s : Arm64.State), n > 0 ∧ s = s
+
+theorem some_c_intro (n : Nat) (h : n > 0) : SomeCPred n :=
+  fun _ => ⟨h, rfl⟩
+
+end ScratchFixture.P5M1

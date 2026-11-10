@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Copyright 2026 Google LLC
+#
+# All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Rebuild or check the static ELF64 process-semantics fixtures in
+# `Arm64/Testing/Regression/fixtures/` (`echo_stdin.elf`, `abort_status.elf`,
+# `overrides_fixture.elf`),
+# `VerifiedLibraries/RustStd/Testing/` (`empty`, `hello`, `cpstd`),
+# `VerifiedLibraries/Mallocng/Testing/` (`allocsurface`),
+# and `CaseStudies/Hashbrown/Implementation/` (`hashbrown_cli.elf`).
+#
+# Usage:
+#   scripts/dev/elf-process-fixture [--elf-process | --rust-std] [--check]
+#
+#   --elf-process  rebuild or check only `Arm64/Testing/Regression/fixtures/`.
+#   --rust-std   rebuild or check only the Rust `std` fixtures (`VerifiedLibraries/RustStd/Testing/`,
+#                `VerifiedLibraries/Mallocng/Testing/allocsurface/`, and
+#                `CaseStudies/Hashbrown/Implementation/hashbrown_cli.elf`).
+#   --check      regenerate into a temporary directory and verify byte-for-byte
+#                equality with the committed fixtures.
+#   -h, --help   show this help message and exit.
+#
+# Examples:
+#   scripts/dev/elf-process-fixture
+#   scripts/dev/elf-process-fixture --check
+#   scripts/dev/elf-process-fixture --rust-std --check
+set -euo pipefail
+
+usage() { sed -n '9,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; }
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+check=0
+only_elf_process=0
+only_rust_std=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --check) check=1; shift ;;
+    --elf-process) only_elf_process=1; shift ;;
+    --rust-std) only_rust_std=1; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$root"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+target_dir="${CARGO_TARGET_DIR:-tools/target}"
+
+cargo build --release --locked --manifest-path tools/Cargo.toml -p snapshot-link >&2
+
+run_elf_process() {
+  local dest="Arm64/Testing/Regression/fixtures"
+  zig cc -target aarch64-linux-musl -static -O2 -g0 -fno-stack-protector \
+    -Wl,--build-id=none -Wl,--strip-debug -Wl,-z,max-page-size=4096 -Wl,-z,common-page-size=4096 \
+    "$dest/echo_stdin.c" -o "$work/echo_stdin.elf"
+  zig cc -target aarch64-linux-musl -static -O2 -g0 -fno-stack-protector \
+    -Wl,--build-id=none -Wl,--strip-debug -Wl,-z,max-page-size=4096 -Wl,-z,common-page-size=4096 \
+    "$dest/abort_status.c" -o "$work/abort_status.elf"
+
+  # Hand-written assembly fixture with a custom three-segment layout.
+  zig cc -target aarch64-linux-musl -g0 -c "$dest/overrides_fixture.s" -o "$work/overrides_fixture.o"
+  zig cc -target aarch64-linux-musl -g0 -c "$dest/overrides_fixture2.s" -o "$work/overrides_fixture2.o"
+  zig ld.lld -static -nostdlib --build-id=none -z max-page-size=4096 \
+    -T "$dest/overrides_fixture.ld" \
+    "$work/overrides_fixture.o" "$work/overrides_fixture2.o" -o "$work/overrides_fixture.elf"
+
+  local f
+  if [[ "$check" == 1 ]]; then
+    for f in echo_stdin.elf abort_status.elf overrides_fixture.elf; do
+      cmp -s "$dest/$f" "$work/$f" || {
+        echo "error: $dest/$f differs from freshly built binary" >&2
+        exit 1
+      }
+    done
+    echo "OK: $dest fixtures are reproducible and up to date"
+  else
+    for f in echo_stdin.elf abort_status.elf overrides_fixture.elf; do
+      cp "$work/$f" "$dest/$f"
+    done
+    echo "$dest"
+  fi
+}
+
+
+run_rust_std_elf() {
+  local dest="VerifiedLibraries/RustStd/Testing"
+  local hb_dest="CaseStudies/Hashbrown/Implementation"
+  "$target_dir/release/snapshot-link" --check-std-toolchain >&2
+  if [[ ! -d "third_party/hashbrown-0.17.1" && ! -d "../third_party/hashbrown-0.17.1" ]]; then
+    ./scripts/fetch-upstream-sources.sh hashbrown >&2
+  fi
+  mkdir -p "$hb_dest/vendor"
+  if [[ -d "third_party/hashbrown-0.17.1" ]]; then
+    ln -sfn ../../../../third_party/hashbrown-0.17.1 "$hb_dest/vendor/hashbrown"
+  else
+    ln -sfn ../../../../../third_party/hashbrown-0.17.1 "$hb_dest/vendor/hashbrown"
+  fi
+
+  local mallocng_dest="VerifiedLibraries/Mallocng/Testing"
+  # Each item is `<crate>:<elf>:<parent dir of the crate>`.
+  local items=("empty:empty.elf:$dest" "hello:hello.elf:$dest" "cpstd:cpstd.elf:$dest"
+    "allocsurface:allocsurface.elf:$mallocng_dest")
+  local item crate rest elf_name crate_dir
+  for item in "${items[@]}"; do
+    crate="${item%%:*}"
+    rest="${item#*:}"
+    elf_name="${rest%%:*}"
+    crate_dir="${rest#*:}/$crate"
+    [[ -d "$crate_dir" ]] || continue
+    "$target_dir/release/snapshot-link" \
+      --main-rust "$crate_dir/Cargo.toml" \
+      --out-dir "$work/std_$crate" \
+      --name "$elf_name" >&2
+  done
+
+  (
+    cd "$hb_dest"
+    CARGO_TARGET_DIR="$work/std_hashbrown_cli" \
+      cargo +1.98.1 build --release --locked --target aarch64-unknown-linux-musl >&2
+  )
+
+  for item in "${items[@]}"; do
+    crate="${item%%:*}"
+    rest="${item#*:}"
+    elf_name="${rest%%:*}"
+    crate_dir="${rest#*:}/$crate"
+    [[ -d "$crate_dir" ]] || continue
+    mkdir -p "$work/std_fixture_$crate"
+    cp "$work/std_$crate/$elf_name" "$work/std_fixture_$crate/$elf_name"
+    cp "$work/std_$crate/link.json" "$work/std_fixture_$crate/link.json"
+    if [[ "$check" == 1 ]]; then
+      "$target_dir/release/snapshot-fixture-diff" "$crate_dir" "$work/std_fixture_$crate"
+      cmp -s "$crate_dir/$elf_name" "$work/std_fixture_$crate/$elf_name" || {
+        echo "error: $crate_dir/$elf_name differs byte-for-byte from freshly built binary" >&2
+        exit 1
+      }
+      cmp -s "$crate_dir/link.json" "$work/std_fixture_$crate/link.json" || {
+        echo "error: $crate_dir/link.json differs byte-for-byte from freshly built manifest" >&2
+        exit 1
+      }
+    else
+      cp "$work/std_fixture_$crate/$elf_name" "$crate_dir/$elf_name"
+      cp "$work/std_fixture_$crate/link.json" "$crate_dir/link.json"
+    fi
+  done
+
+  local hb_built="$work/std_hashbrown_cli/aarch64-unknown-linux-musl/release/hashbrown-cli"
+  if [[ "$check" == 1 ]]; then
+    cmp -s "$hb_dest/hashbrown_cli.elf" "$hb_built" || {
+      echo "error: $hb_dest/hashbrown_cli.elf differs byte-for-byte from freshly built binary" >&2
+      exit 1
+    }
+    echo "OK: $dest, $mallocng_dest/allocsurface, and $hb_dest/hashbrown_cli.elf fixtures are reproducible and up to date"
+  else
+    cp "$hb_built" "$hb_dest/hashbrown_cli.elf"
+    echo "$dest $mallocng_dest/allocsurface"
+  fi
+}
+
+if [[ "$only_elf_process" == 1 ]]; then
+  run_elf_process
+elif [[ "$only_rust_std" == 1 ]]; then
+  run_rust_std_elf
+else
+  run_elf_process
+  run_rust_std_elf
+fi

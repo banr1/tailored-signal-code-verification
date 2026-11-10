@@ -1,0 +1,17 @@
+# Closed exemption list `E` of mixed `Specifications` modules for the proof-dependency run
+# (`Symbolic/scripts/machine_free_check.py --criterion` / `--emit-proofdeps` / `--check-proofdeps`
+# / `--root-report`).
+#
+# Format: one exact module name per line (`*` wildcards are rejected fail-closed).
+# `#` starts a comment; blank lines are ignored.
+#
+# Each of these 5 modules declares both pure protocol/statement definitions used by the trusted
+# symbolic statements and machine-level definitions over `Arm64.State` / `ProofLib` / `GeneratedLean`.
+# They are NOT denied by module in part C:
+#   - any machine-level constant in `E` whose cone reaches part A (`Arm64.*`, `ProofLib.*`,
+#     `GeneratedLean.*`, or groups 2-4) is caught directly by the transitive constant-cone walk;
+#   - every root-cone constant defined in `E` (whatever its cone) is listed unconditionally and
+#     flagged `E` in the mandatory `--root-report` residual report (E1).
+
+LibsignalBinary.Specifications.SignalSession.Run
+Symbolic.Specifications.Concrete.MachineEvents

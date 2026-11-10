@@ -1,0 +1,233 @@
+## closure: 190 functions, 38381 insns, bl 2641, blr 1, br 13, loops-in 110 fns (1106 back-edges)
+## odd mnemonics: {'pmull': 1}
+ 4884 blr0 br1 back 7 <spqr::v1::chunked::states::States>::recv
+ 3436 blr0 br3 back105 spqr::send::<libsignal_session::HookRng>
+ 2911 blr0 br1 back55 <spqr::v1::chunked::states::States>::from_pb
+ 1940 blr0 br1 back90 <spqr::proto::pq_ratchet::PqRatchetState as prost::message::Message>::encode_to_vec
+ 1229 blr0 br0 back32 <spqr::encoding::polynomial::PolyEncoder as spqr::encoding::Encoder>::next_chunk
+  855 blr0 br1 back19 prost::encoding::message::merge::<spqr::proto::pq_ratchet::V1State, &mut &[u8]>
+  759 blr0 br0 back15 spqr::recv
+  745 blr0 br0 back40 spqr::decode_state
+  615 blr0 br1 back 5 <spqr::v1::chunked::states::States>::into_pb
+  541 blr0 br0 back 0 <hmac::Hmac<sha2::Sha256> as crypto_common::KeyInit>::new_from_slice [local#3]
+  516 blr0 br0 back13 <spqr::encoding::polynomial::PolyDecoder as spqr::encoding::Decoder>::decoded_message
+  514 blr0 br0 back 9 <spqr::v1::chunked::send_ek::EkSentCt1Received>::recv_ct2_chunk
+  473 blr0 br0 back 6 spqr::kdf::hkdf_to_slice
+  437 blr0 br0 back13 <spqr::encoding::polynomial::PolyEncoder>::from_pb
+  411 blr0 br1 back 7 <spqr::proto::pq_ratchet::V1State as prost::message::Message>::encoded_len [local#2]
+  411 blr0 br1 back 7 <spqr::proto::pq_ratchet::V1State as prost::message::Message>::encoded_len [local#1]
+  325 blr0 br0 back 8 <spqr::v1::chunked::send_ct::NoHeaderReceived>::recv_hdr_chunk
+  325 blr0 br0 back15 <spqr::encoding::polynomial::PolyDecoder>::from_pb
+  312 blr0 br0 back14 <spqr::chain::Chain>::recv_key
+  296 blr0 br0 back 3 <spqr::chain::Chain>::from_pb
+  291 blr0 br0 back21 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::EkReceivedCt1Sampled, &mut &[u8]>
+  281 blr0 br0 back 4 <spqr::v1::unchunked::send_ct::Ct1SentEkReceived>::send_ct2
+  277 blr0 br0 back25 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::HeaderSent, &mut &[u8]>
+  274 blr0 br0 back24 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::KeysSampled, &mut &[u8]>
+  266 blr0 br0 back16 prost::encoding::varint::encode_varint::<alloc::vec::Vec<u8>> [local#4]
+  256 blr0 br0 back23 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::HeaderReceived, &mut &[u8]>
+  247 blr0 br0 back12 prost::encoding::varint::encode_varint::<alloc::vec::Vec<u8>> [local#2]
+  244 blr0 br0 back 6 <bytes::bytes_mut::BytesMut>::reserve_inner
+  240 blr0 br0 back21 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::Ct2Sampled, &mut &[u8]>
+  239 blr0 br0 back 5 <spqr::chain::Chain>::into_pb
+  239 blr0 br0 back21 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::NoHeaderReceived, &mut &[u8]>
+  228 blr1 br0 back 5 prost::encoding::bytes::merge::<alloc::vec::Vec<u8>, &mut &[u8]> [local#3]
+  227 blr0 br0 back16 prost::encoding::message::merge::<spqr::proto::pq_ratchet::PolynomialDecoder, &mut &[u8]>
+  219 blr0 br0 back11 prost::encoding::message::encode::<spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent, alloc::vec::Vec<u8>> [local#2]
+  214 blr0 br0 back18 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::KeysUnsampled, &mut &[u8]>
+  212 blr0 br0 back 8 <spqr::v1::chunked::states::Message>::deserialize
+  212 blr0 br0 back13 prost::encoding::message::merge::<spqr::proto::pq_ratchet::PolynomialEncoder, &mut &[u8]>
+  209 blr0 br0 back 3 <spqr::encoding::polynomial::PolyEncoder as spqr::encoding::Encoder>::encode_bytes
+  197 blr0 br0 back11 prost::encoding::message::encode::<spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent, alloc::vec::Vec<u8>> [local#1]
+  194 blr0 br0 back11 <spqr::encoding::polynomial::Poly>::compute_at
+  183 blr0 br0 back10 prost::encoding::message::encode::<spqr::proto::pq_ratchet::chain::epoch::EpochDirection, alloc::vec::Vec<u8>> [local#2]
+  181 blr0 br0 back15 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent, &mut &[u8]>
+  181 blr0 br1 back 0 core::ptr::drop_glue::<spqr::v1::chunked::states::States> [local#1]
+  177 blr0 br0 back 9 <spqr::encoding::polynomial::Poly>::lagrange_interpolate_complete
+  176 blr0 br0 back 8 <spqr::encoding::polynomial::PolyEncoder>::into_pb
+  173 blr0 br1 back12 core::ptr::drop_glue::<core::option::Option<spqr::proto::pq_ratchet::v1_state::InnerState>>
+  170 blr0 br0 back 3 <spqr::encoding::polynomial::Poly>::lagrange_interpolate_prepare
+  169 blr0 br0 back10 prost::encoding::message::encode::<spqr::proto::pq_ratchet::chain::epoch::EpochDirection, alloc::vec::Vec<u8>> [local#1]
+  167 blr0 br0 back14 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::unchunked::EkSentCt1Received, &mut &[u8]>
+  166 blr0 br0 back 8 prost::encoding::message::encode::<spqr::proto::pq_ratchet::v1_state::unchunked::EkSentCt1Received, alloc::vec::Vec<u8>> [local#2]
+  164 blr0 br0 back 5 spqr::encode_varint
+  161 blr0 br0 back 9 prost::encoding::message::encode::<spqr::proto::pq_ratchet::Authenticator, alloc::vec::Vec<u8>> [local#2]
+  154 blr0 br0 back12 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::Ct1Sampled, &mut &[u8]>
+  153 blr0 br0 back 0 <spqr::v1::chunked::send_ct::Ct1Acknowledged>::recv_ek_chunk
+  150 blr0 br0 back 8 prost::encoding::message::encode::<spqr::proto::pq_ratchet::v1_state::unchunked::EkSentCt1Received, alloc::vec::Vec<u8>> [local#1]
+  149 blr0 br0 back 4 <spqr::chain::Chain>::send_key
+  148 blr0 br0 back 1 <spqr::chain::Chain>::add_epoch
+  147 blr0 br0 back 9 prost::encoding::message::encode::<spqr::proto::pq_ratchet::Authenticator, alloc::vec::Vec<u8>> [local#1]
+  145 blr0 br0 back 0 prost::encoding::varint::decode_varint::<&mut &[u8]> [local#2]
+  145 blr0 br0 back11 prost::encoding::message::merge::<spqr::proto::pq_ratchet::chain::epoch::EpochDirection, &mut &[u8]>
+  144 blr0 br0 back11 prost::encoding::message::merge::<spqr::proto::pq_ratchet::ChainParams, &mut &[u8]>
+  130 blr0 br0 back11 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::Ct1Received, &mut &[u8]>
+  130 blr0 br0 back11 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::Ct1Acknowledged, &mut &[u8]>
+  129 blr0 br0 back11 <spqr::encoding::polynomial::PolyDecoder as spqr::encoding::Decoder>::add_chunk
+  129 blr0 br0 back11 prost::encoding::message::merge::<spqr::proto::pq_ratchet::v1_state::chunked::EkSentCt1Received, &mut &[u8]>
+  126 blr0 br0 back 5 <spqr::proto::pq_ratchet::Chain as prost::message::Message>::encoded_len [local#2]
+  126 blr0 br0 back 5 <spqr::proto::pq_ratchet::Chain as prost::message::Message>::encoded_len [local#1]
+  124 blr0 br0 back 5 <[&[u8]] as alloc::slice::Concat<u8>>::concat [local#2]
+  121 blr0 br0 back 8 <spqr::proto::pq_ratchet::chain::Epoch as prost::message::Message>::encoded_len [local#2]
+  121 blr0 br0 back 8 <spqr::proto::pq_ratchet::chain::Epoch as prost::message::Message>::encoded_len [local#1]
+  117 blr0 br0 back 9 prost::encoding::message::merge::<spqr::proto::pq_ratchet::Authenticator, &mut &[u8]>
+  116 blr0 br0 back 0 <spqr::chain::Chain>::new
+  113 blr0 br0 back 0 <spqr::v1::chunked::send_ek::HeaderSent>::recv_ct1_chunk
+  112 blr0 br0 back 0 <hmac::Hmac<sha2::Sha256> as digest::FixedOutput>::finalize_fixed [local#3]
+  112 blr0 br0 back 0 spqr::init_inner
+  112 blr0 br0 back18 prost::encoding::varint::decode_varint_slow::<&mut &[u8]>
+  110 blr0 br0 back 2 <spqr::v1::chunked::states::Message>::serialize
+  109 blr0 br1 back 0 core::ptr::drop_glue::<spqr::v1::chunked::states::States> [local#2]
+  108 blr0 br0 back 0 <spqr::v1::unchunked::send_ct::Ct1Sent>::from_pb
+  107 blr0 br0 back 0 <spqr::v1::chunked::send_ek::KeysSampled>::recv_ct1_chunk
+  107 blr0 br0 back 0 <spqr::authenticator::Authenticator>::update
+  105 blr0 br0 back 0 core::ptr::drop_glue::<[spqr::encoding::polynomial::Poly; 16]>
+  105 blr0 br0 back 0 core::ptr::drop_glue::<[sorted_vec::SortedSet<spqr::encoding::polynomial::Pt>; 16]>
+  105 blr0 br0 back 8 prost::encoding::skip_field::<&mut &[u8]> [local#3]
+  105 blr0 br0 back 0 core::ptr::drop_glue::<spqr::encoding::polynomial::PolyEncoder> [local#1]
+  105 blr0 br0 back 0 core::ptr::drop_glue::<spqr::encoding::polynomial::PolyDecoder>
+  102 blr0 br0 back 4 <spqr::encoding::polynomial::PolyDecoder>::into_pb
+  100 blr0 br0 back 4 prost::encoding::message::encode::<spqr::proto::pq_ratchet::PolynomialDecoder, alloc::vec::Vec<u8>> [local#2]
+   99 blr0 br0 back 0 <spqr::v1::unchunked::send_ct::Ct1Sent>::recv_ek
+   97 blr0 br0 back 1 <spqr::encoding::gf::GF16>::div_impl
+   93 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct1SentEkReceived as prost::message::Message>::encoded_len [local#2]
+   93 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent as prost::message::Message>::encoded_len [local#2]
+   93 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct1SentEkReceived as prost::message::Message>::encoded_len [local#1]
+   93 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent as prost::message::Message>::encoded_len [local#1]
+   92 blr0 br0 back 4 prost::encoding::message::encode::<spqr::proto::pq_ratchet::PolynomialDecoder, alloc::vec::Vec<u8>> [local#1]
+   89 blr0 br0 back 1 <spqr::v1::unchunked::send_ek::EkSentCt1Received>::from_pb
+   85 blr0 br0 back 2 spqr::v1::chunked::send_ct::send_ct2_encoder
+   84 blr0 br0 back 5 prost::encoding::message::encode::<spqr::proto::pq_ratchet::ChainParams, alloc::vec::Vec<u8>> [local#2]
+   82 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::HeaderSent as prost::message::Message>::encoded_len [local#2]
+   82 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::EkSentCt1Received as prost::message::Message>::encoded_len [local#2]
+   82 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::HeaderSent as prost::message::Message>::encoded_len [local#1]
+   82 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::EkSentCt1Received as prost::message::Message>::encoded_len [local#1]
+   80 blr0 br0 back 5 prost::encoding::message::encode::<spqr::proto::pq_ratchet::ChainParams, alloc::vec::Vec<u8>> [local#1]
+   76 blr0 br0 back 4 <spqr::proto::pq_ratchet::PolynomialEncoder as prost::message::Message>::encoded_len [local#2]
+   76 blr0 br0 back 0 spqr::chain_from
+   76 blr0 br0 back 4 <spqr::proto::pq_ratchet::PolynomialEncoder as prost::message::Message>::encoded_len [local#1]
+   72 blr0 br0 back 2 <spqr::proto::pq_ratchet::v1_state::chunked::Ct1Sampled as prost::message::Message>::encoded_len [local#2]
+   72 blr0 br0 back 2 <spqr::proto::pq_ratchet::v1_state::chunked::HeaderSent as prost::message::Message>::encoded_len [local#2]
+   72 blr0 br0 back 2 <spqr::proto::pq_ratchet::v1_state::chunked::Ct1Sampled as prost::message::Message>::encoded_len [local#1]
+   72 blr0 br0 back 2 <spqr::proto::pq_ratchet::v1_state::chunked::HeaderSent as prost::message::Message>::encoded_len [local#1]
+   71 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::HeaderReceived as prost::message::Message>::encoded_len [local#2]
+   71 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::EkSent as prost::message::Message>::encoded_len [local#2]
+   71 blr0 br0 back 1 spqr::encoding::gf::mul2_u16
+   71 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::HeaderReceived as prost::message::Message>::encoded_len [local#1]
+   71 blr0 br0 back 0 <spqr::proto::pq_ratchet::v1_state::unchunked::EkSent as prost::message::Message>::encoded_len [local#1]
+   68 blr0 br0 back 0 <spqr::chain::ChainEpochDirection>::next_key_internal
+   67 blr0 br0 back 0 <spqr::v1::chunked::send_ek::Ct1Received>::recv_ct2_chunk
+   66 blr0 br0 back 4 <spqr::proto::pq_ratchet::PolynomialDecoder as prost::message::Message>::encoded_len [local#2]
+   66 blr0 br0 back 4 <spqr::proto::pq_ratchet::PolynomialDecoder as prost::message::Message>::encoded_len [local#1]
+   63 blr0 br0 back 4 prost::encoding::bytes::encode_repeated::<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> [local#2]
+   63 blr0 br0 back 0 <bytes::bytes::Bytes as core::convert::From<alloc::vec::Vec<u8>>>::from
+   59 blr0 br0 back 2 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::chunked::HeaderSent>
+   59 blr0 br0 back 2 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::chunked::EkSentCt1Received>
+   59 blr0 br0 back 2 prost::encoding::message::encode::<spqr::proto::pq_ratchet::PolynomialEncoder, alloc::vec::Vec<u8>> [local#2]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct2Sent as prost::message::Message>::encoded_len [local#2]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::NoHeaderReceived as prost::message::Message>::encoded_len [local#2]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::KeysUnsampled as prost::message::Message>::encoded_len [local#2]
+   59 blr0 br0 back 0 spqr::encoding::gf::unaccelerated::mul
+   59 blr0 br0 back 4 prost::encoding::bytes::encode_repeated::<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> [local#1]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::Ct2Sent as prost::message::Message>::encoded_len [local#1]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::NoHeaderReceived as prost::message::Message>::encoded_len [local#1]
+   59 blr0 br0 back 1 <spqr::proto::pq_ratchet::v1_state::unchunked::KeysUnsampled as prost::message::Message>::encoded_len [local#1]
+   57 blr0 br0 back 4 core::ptr::drop_glue::<core::option::Option<spqr::proto::pq_ratchet::PolynomialEncoder>>
+   56 blr0 br0 back 3 core::ptr::drop_glue::<spqr::proto::pq_ratchet::Chain>
+   55 blr0 br0 back 2 prost::encoding::message::encode::<spqr::proto::pq_ratchet::PolynomialEncoder, alloc::vec::Vec<u8>> [local#1]
+   54 blr0 br0 back 2 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::chunked::HeaderReceived>
+   53 blr0 br0 back 0 <spqr::v1::chunked::send_ct::EkReceivedCt1Sampled>::recv_ct1_ack
+   52 blr0 br0 back 4 core::ptr::drop_glue::<spqr::proto::pq_ratchet::PolynomialEncoder>
+   50 blr0 br0 back 1 <spqr::authenticator::Authenticator>::from_pb
+   48 blr0 br0 back 2 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::chunked::NoHeaderReceived>
+   48 blr0 br0 back 0 core::ptr::drop_glue::<spqr::chain::Chain>
+   48 blr0 br0 back 0 <spqr::authenticator::Authenticator>::new
+   47 blr0 br0 back 1 spqr::kdf::hkdf_to_vec
+   45 blr0 br0 back 0 <alloc::raw_vec::RawVecInner>::finish_grow [local#8]
+   42 blr0 br0 back 0 <alloc::raw_vec::RawVecInner>::finish_grow [local#4]
+   42 blr0 br0 back 0 <alloc::raw_vec::RawVecInner>::finish_grow [local#2]
+   41 blr0 br0 back 0 <alloc::raw_vec::RawVecInner>::finish_grow [local#7]
+   41 blr0 br0 back 0 <spqr::v1::chunked::send_ek::Ct1Received>::send_ek_chunk
+   41 blr0 br0 back 0 <spqr::v1::chunked::send_ct::Ct1Sampled>::send_ct1_chunk
+   40 blr0 br0 back 0 core::ptr::drop_glue::<spqr::proto::pq_ratchet::PqRatchetState>
+   39 blr0 br0 back 0 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::chunked::Ct1Received>
+   39 blr0 br0 back 0 core::ptr::drop_glue::<core::option::Option<spqr::proto::pq_ratchet::v1_state::unchunked::Ct1Sent>>
+   39 blr0 br0 back 0 <spqr::v1::chunked::send_ek::HeaderSent>::send_ek_chunk
+   38 blr0 br0 back 0 <alloc::collections::vec_deque::VecDeque<spqr::chain::ChainEpoch>>::grow
+   38 blr0 br0 back 3 core::ptr::drop_glue::<[spqr::proto::pq_ratchet::chain::Epoch]>
+   37 blr0 br0 back 0 <spqr::authenticator::Authenticator>::mac_hdr
+   36 blr0 br0 back 0 core::ptr::drop_glue::<spqr::proto::pq_ratchet::v1_state::unchunked::Ct1SentEkReceived>
+   35 blr0 br0 back 0 <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [local#7]
+   34 blr0 br0 back 2 core::ptr::drop_glue::<[spqr::chain::ChainEpoch]> [local#2]
+   34 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::unchunked::send_ct::Ct1Sent> [local#2]
+   34 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::unchunked::send_ct::Ct1Sent> [local#1]
+   34 blr0 br0 back 2 core::ptr::drop_glue::<[spqr::chain::ChainEpoch]> [local#1]
+   34 blr0 br0 back 0 <spqr::v1::chunked::send_ct::Ct2Sampled>::send_ct2_chunk
+   33 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::chunked::send_ct::EkReceivedCt1Sampled>
+   32 blr0 br0 back 1 <prost::error::DecodeError>::push
+   32 blr0 br0 back 0 <spqr::v1::chunked::send_ct::EkReceivedCt1Sampled>::send_ct1_chunk
+   31 blr0 br0 back 0 <spqr::v1::chunked::send_ct::Ct2Sampled>::recv_next_epoch
+   31 blr0 br0 back 0 <alloc::raw_vec::RawVecInner>::grow_amortized
+   30 blr0 br0 back 0 <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [local#4]
+   30 blr0 br0 back 0 <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [local#2]
+   29 blr0 br0 back 0 core::ptr::drop_glue::<core::option::Option<spqr::proto::pq_ratchet::Chain>>
+   28 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::chunked::send_ek::EkSentCt1Received>
+   28 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::chunked::send_ek::Ct1Received>
+   26 blr0 br0 back 0 <alloc::raw_vec::RawVec<spqr::chain::ChainEpoch>>::grow_one
+   26 blr0 br0 back 0 <alloc::raw_vec::RawVec<spqr::encoding::gf::GF16>>::grow_one
+   26 blr0 br0 back 0 <alloc::raw_vec::RawVec<&[spqr::encoding::polynomial::Pt]>>::grow_one
+   26 blr0 br0 back 0 <alloc::raw_vec::RawVec<spqr::encoding::polynomial::Pt>>::grow_one
+   26 blr0 br0 back 0 <alloc::raw_vec::RawVec<spqr::encoding::polynomial::Poly>>::grow_one
+   25 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::chunked::send_ek::HeaderSent>
+   24 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::unchunked::send_ek::EkSent>
+   23 blr0 br0 back 0 <prost::error::DecodeError as core::convert::From<prost::error::DecodeErrorKind>>::from
+   22 blr0 br0 back 0 log::__private_api::log_impl::<log::__private_api::GlobalLogger> [local#3]
+   18 blr0 br0 back 0 core::ptr::drop_glue::<spqr::v1::chunked::send_ct::Ct2Sampled>
+   18 blr0 br0 back 0 spqr::chain_from_version_negotiation
+   14 blr0 br0 back 0 bytes::panic_advance
+   13 blr0 br0 back 0 core::panicking::assert_failed::<u8, u8>
+   10 blr0 br0 back 0 spqr::encoding::gf::accelerated::mul2_unreduced
+    9 blr0 br0 back 0 spqr::util::is_non_zero
+    9 blr0 br0 back 0 <alloc::raw_vec::RawVec<(&str, &str)>>::grow_one
+    2 blr0 br0 back 0 core::ptr::drop_glue::<spqr::encoding::polynomial::PolyEncoder> [local#2]
+## hooks (extern stubs) reached:
+  543 __rustc::__rust_dealloc
+  207 memcpy
+  164 __rustc::__rust_no_alloc_shim_is_unstable_v2
+  157 __rustc::__rust_alloc
+  153 core::panicking::panic_const::panic_const_add_overflow
+   89 alloc::raw_vec::handle_error
+   19 core::panicking::panic_const::panic_const_sub_overflow
+   18 <alloc::raw_vec::RawVec<u8>>::grow_one
+   17 sha2::sha256::compress256
+   14 core::result::unwrap_failed
+   12 core::panicking::panic_bounds_check
+   10 core::panicking::assert_failed::<u64, u64>
+   10 <std::sys::sync::once::futex::Once>::call
+    7 core::slice::index::slice_index_fail
+    7 __rustc::__rust_alloc_zeroed
+    6 <alloc::raw_vec::RawVec<alloc::vec::Vec<u8>>>::grow_one
+    5 <log::__private_api::GlobalLogger as log::Log>::log
+    4 __rustc::__rust_realloc
+    4 core::option::expect_failed
+    4 core::panicking::panic
+    4 libcrux_hmac::hmac
+    4 core::panicking::panic_fmt
+    3 memmove
+    3 memset
+    3 core::panicking::assert_failed::<usize, usize>
+    2 alloc::fmt::format::format_inner
+    2 alloc::alloc::handle_alloc_error
+    2 libsignal_session_rng_fill
+    1 libcrux_ml_kem::mlkem768::incremental::encapsulate2
+    1 libcrux_ml_kem::mlkem768::incremental::validate_pk_bytes
+    1 core::panicking::panic_const::panic_const_mul_overflow
+    1 libcrux_ml_kem::mlkem768::incremental::decapsulate_compressed_key
+    1 __aarch64_ldadd8_rel
+    1 core::panicking::panic_const::panic_const_shl_overflow
+    1 <libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::from_seed
+    1 <libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::pk1
+    1 <libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::pk2
+    1 libcrux_ml_kem::mlkem768::incremental::encapsulate1
+    1 core::panicking::assert_failed_inner
+## stopped at (verified/hooked boundary):

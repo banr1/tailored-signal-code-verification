@@ -1,0 +1,829 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedCt1Sampled
+public import LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedMergeBudgetKit
+import GeneratedLean.LibsignalSessionCode -- shake: keep
+import LibsignalBinary.Proofs.Common.SharedHelpers
+meta import LibsignalBinary.Proofs.Common.SharedHelpers -- shake: keep
+meta import LibsignalBinary.Proofs.Placed.BudgetVmSteps -- shake: keep
+import LibsignalBinary.Proofs.E2E.Pqxdh.ResponderStore.ResponderStoreCodeSym
+import LibsignalBinary.Proofs.FnOffEq
+import LibsignalBinary.Proofs.ProtoCodecRoundTrip
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.PolyDecoder
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.PolyEncoder
+import LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.UnchunkedCt1Sent
+import LibsignalBinary.Proofs.TripleRatchet.Prost.BytesMerge.Phase1
+import ProofLib.SepLogic.WPp
+
+/-!
+# SPQR V1: Budget-Threaded Step Helpers for `Chunked.Ct1Sampled::merge` (Block `300`)
+
+Proves budget-threaded error exits (`err0_ret`, `from_err`, `push_err`), `loop_le_exit`, and
+`decode_key_step` for `V1State.Chunked.Ct1Sampled::merge` (Block `300`) with
+`withLsCodeRoLoaded lsmpl` callees.
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+set_option linter.unusedSimpArgs false
+
+namespace LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedCt1SampledBudgetAux
+
+open Arm64 ProofLib ProofLib.ProgramReflection SepProp
+open CryptoVerification (LibsignalPlacement lsmpl)
+open CryptoVerification.RustHeap (RustAlloc)
+open CryptoVerification.LibsignalProtoCodec (WireType decodeVarint decodeVarint_length)
+open CryptoVerification.LibsignalTripleRatchet
+  (KindNoHeap decodeErrorAtStackLen decodeErrorHookStack withLsCodeRoLoaded)
+open CryptoVerification.LibsignalTripleRatchet.Prost
+  (IsDropSuffix bv32_zeroExtend_ofNat decodeVarint_suffix
+   key_shr32_of_ge key_shr32_of_lt key_wt_none key_wt_some
+   pointsTo64_pair_entails_memRegion16 pointsToBytes_prefix_join
+   sliceCursorAfter sliceCursorAfter_eq_split sliceCursorAfter_join sliceCursorAt
+   suffix_trans tag_cbz_false w1_tag_eq)
+open CryptoVerification.LibsignalSpqrV1 (V1State)
+open CryptoVerification.LibsignalSpqrV1.Proto (mergeMessage)
+open CryptoVerification.SpqrV1.Auth (WppPost)
+open CryptoVerification.SpqrV1.ProtoRepr (chunkedCt1SampledPBAt)
+open CryptoVerification.SpqrV1.Prost.MessageMerge
+  (ChunkedCt1SampledMergeGhost ChunkedHighCalleeSaved ChunkedLoopRegs SepWPpLscro
+   bv64_add_zero bv64_sub_zero chunkedBelow chunkedBelow_err chunkedBelow_err_entails
+   chunkedBelow_leaf chunkedBelow_leaf_entails chunkedCt1SampledMerge_fnOff
+   chunkedCt1SampledPBAt_entails_exists
+   chunkedCt1SampledPBCapAt chunkedCt1SampledPBCapAt_entails_pb
+   chunkedCt1SampledPBCapAt_mono chunkedMergeStack chunkedSavedRegs
+   cmp_len_limit_of_eq cmp_len_limit_of_gt cmp_len_limit_of_lt codecWireTypeToProto
+   memRegion8_memRegion40_entails_48_128 memRegion_48_split2_128 memRegion_48_split_128
+   mergeLoopBin mergeLoopBin_eq_limit mergeLoopBin_lt_limit
+   mergeLoopBin_of_decodeVarint_none mergeLoopBin_of_key_ge
+   mergeLoopBin_of_tag_zero mergeLoopBin_of_wt_none
+   pointsTo64_memRegion32_entails_40_128 pointsTo64_memRegion40_entails_48_128
+   protoPrefixStep_chunked_ct1Sampled_mergeField stackAt_chunkedMerge)
+open CryptoVerification.SpqrV1.Prost.MessageMerge.Part2 (blkPC_300 blkPl_300)
+open CryptoVerification.SpqrV1.Varint (decodeVarint2Stack)
+open LibsignalBinary.Heap
+  (AllocCostModel AllocEvent BudgetLimits FitsEnv RustCliAllocBudget VmPreserved)
+open LibsignalBinary.Heap.SpecBudget (decodeErrorFromBudgetSpec)
+open LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedDefsBudget
+  (ChunkedCt1SampledMergeEnv ChunkedCt1SampledMergePostEnv
+   SpqrMergeLoopEnv chunkedCt1SampledMergeSpec
+   chunkedCt1SampledMergeSpecOfEnv ct1SampledPolyCapBound
+   decodeErrorPushMergeBudgetSpec)
+open LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedMergeBudgetKit
+  (WppPanicFalse call_budget_lscro decodeErrorFromEnv_to_spqr
+   decodeErrorPushEnv_to_spqr decodeVarint2Env_eq_nil_of_some
+   decodeVarint2Env_to_spqr fitsEnv_decodeErrorFrom_of_spqr
+   fitsEnv_decodeErrorPush_of_spqr fitsEnv_decodeVarint2_of_spqr
+   pool_entails_spqrPoolAt_nil pool_entails_spqrPoolAt_snoc pool_spqr_mono
+   sepWPpLscro_of_ret_vm sepWPpLscro_of_vm spqrPoolAt spqrPoolAt_of_vmPreserved)
+open LibsignalBinary.Proofs.SpqrV1.Varint.DecodeVarint2Budget
+  (decodeVarint2Spec decodeVarint2SpecGen)
+
+attribute [local irreducible] Program.fetch Program.externAt? Program.fnOff VmPreserved
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+attribute [local simp, local arm64_norm] bv64_sub_zero bv64_add_zero chunkedCt1SampledMerge_fnOff
+
+/-- Budget-threaded error-exit separation-logic bundle at fuel `f` (`f ≤ 6 * bs.length + 12`). -/
+def ct1SampledErrFrame {M : AllocCostModel} (A : RustCliAllocBudget M)
+    (lim : BudgetLimits) (st : M.σ) (f polyBound : Nat) (s0 s : State)
+    (msgPtr bufRef slot ptr : BitVec 64)
+    (m : V1State.Chunked.Ct1Sampled) (bs : List (BitVec 8)) : SepProp :=
+  spqrPoolAt A lim st f bs.length polyBound s ∗
+    chunkedSavedRegs s0 ∗ chunkedCt1SampledPBAt A.repAlloc msgPtr m ∗
+    (bufRef ↦₆₄ slot) ∗ memRegion slot 16 ∗ (ptr ↦ₛ bs)
+
+/-- Budget-threaded loop-head (`+192#64`) separation-logic bundle for `Chunked.Ct1Sampled::merge`. -/
+def ct1SampledLoopPre {M : AllocCostModel} (A : RustCliAllocBudget M)
+    (lim : BudgetLimits) (st : M.σ) (s0 s : State)
+    (msgPtr bufRef slot ptr : BitVec 64)
+    (m : V1State.Chunked.Ct1Sampled) (bs cur : List (BitVec 8))
+    (polyBound : Nat) : SepProp :=
+  spqrPoolAt A lim st (6 * (bs.length - cur.length)) bs.length polyBound s ∗
+    chunkedCt1SampledPBCapAt A.repAlloc msgPtr cur.length m ∗
+    (bufRef ↦₆₄ slot) ∗ sliceCursorAfter slot ptr bs cur ∗
+    memRegion (s0.sp - 128#64) 48 ∗ chunkedBelow s0.sp ∗ chunkedSavedRegs s0
+
+theorem stackAt_decodeVarint2_raw_eq (sp : BitVec 64) :
+    stackAt sp (0x40 + (0x40 + decodeErrorHookStack)) = stackAt sp decodeVarint2Stack := rfl
+
+theorem stackAt_chunkedMerge_epilogue (s0 : State) :
+    chunkedBelow s0.sp ∗ memRegion (s0.sp - 128#64) 48 ∗ chunkedSavedRegs s0 ⊢
+      stackAt s0.sp chunkedMergeStack := by
+  rw [stackAt_chunkedMerge s0.sp, chunkedSavedRegs]
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x19))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x20))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x21))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x22))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x23))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x24))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x25))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x30))
+  refine Entails.trans ?_ (Entails.sepExists_intro (s0.readReg64 .x29))
+  exact Entails.of_eq (by sep_ac_rfl)
+
+private theorem decodeErrorWith_le3_ct1s (A : RustAlloc) (e : BitVec 64) {n : Nat} (hn : n ≤ 3) :
+    decodeErrorAtStackLen A e n ⊢ ∃∗ k : Nat, ⌜k ≤ 3⌝ ∗ decodeErrorAtStackLen A e k :=
+  Entails.trans (Entails.pure_right hn (Entails.refl _))
+    (Entails.sepExists_right n (Entails.refl _))
+
+private theorem ct1_ok_exit_entails {M : AllocCostModel} (A : RustCliAllocBudget M)
+    (lim : BudgetLimits) (st : M.σ) (x : ChunkedCt1SampledMergeGhost)
+    (s0 s sf : State) (m : V1State.Chunked.Ct1Sampled) (cur : List (BitVec 8))
+    (evs : List AllocEvent)
+    (hsome : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = some (m, cur))
+    (hvm : VmPreserved s sf)
+    (htr : sf.trace = s0.trace) (hx0 : sf.readReg64 .x0 = 0#64)
+    (hevs : SpqrMergeLoopEnv (6 * (x.bs.length - cur.length)) x.bs.length
+      (ct1SampledPolyCapBound x) evs) :
+    stackAt s0.sp chunkedMergeStack ∗
+      (chunkedCt1SampledPBCapAt A.repAlloc x.msgPtr cur.length m ∗
+        ((x.bufRef ↦₆₄ x.slot) ∗
+          (sliceCursorAfter x.slot x.ptr x.bs cur ∗ A.pool lim (M.stepEvents evs st) s))) ⊢
+    (chunkedCt1SampledMergeSpec A lim).post (x, st) s0 sf := by
+  dsimp only [chunkedCt1SampledMergeSpec, chunkedCt1SampledMergeSpecOfEnv,
+    ChunkedCt1SampledMergePostEnv]
+  rw [hsome, htr, hx0]
+  refine Entails.pure_right rfl ?_
+  refine Entails.trans (Entails.of_eq (by sep_ac_rfl :
+    stackAt s0.sp chunkedMergeStack ∗
+      (chunkedCt1SampledPBCapAt A.repAlloc x.msgPtr cur.length m ∗
+        ((x.bufRef ↦₆₄ x.slot) ∗
+          (sliceCursorAfter x.slot x.ptr x.bs cur ∗ A.pool lim (M.stepEvents evs st) s))) =
+    (x.bufRef ↦₆₄ x.slot) ∗
+      (A.pool lim (M.stepEvents evs st) s ∗
+        (stackAt s0.sp chunkedMergeStack ∗
+          (chunkedCt1SampledPBCapAt A.repAlloc x.msgPtr cur.length m ∗
+            sliceCursorAfter x.slot x.ptr x.bs cur))))) ?_
+  exact sepConj_mono_right (sepConj_mono
+    (pool_spqr_mono A lim st hvm (Nat.le_refl _) hevs)
+    (sepConj_mono_right (Entails.pure_right rfl (Entails.refl _))))
+
+private theorem ct1_err_exit_entails {M : AllocCostModel} (A : RustCliAllocBudget M)
+    (lim : BudgetLimits) (st : M.σ) (x : ChunkedCt1SampledMergeGhost)
+    (s0 s sf : State) (m : V1State.Chunked.Ct1Sampled) (err : BitVec 64)
+    (n f : Nat) (evs : List AllocEvent)
+    (hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none)
+    (hvm : VmPreserved s sf) (hf : f ≤ 6 * x.bs.length + 12) (hn : n ≤ 3) (herr : err ≠ 0#64)
+    (htr : sf.trace = s0.trace) (hx0 : sf.readReg64 .x0 = err)
+    (hevs : SpqrMergeLoopEnv f x.bs.length (ct1SampledPolyCapBound x) evs) :
+    stackAt s0.sp chunkedMergeStack ∗
+      (decodeErrorAtStackLen A.repAlloc err n ∗
+        (chunkedCt1SampledPBAt A.repAlloc x.msgPtr m ∗
+          ((x.bufRef ↦₆₄ x.slot) ∗
+            (memRegion x.slot 16 ∗ ((x.ptr ↦ₛ x.bs) ∗ A.pool lim (M.stepEvents evs st) s))))) ⊢
+    (chunkedCt1SampledMergeSpec A lim).post (x, st) s0 sf := by
+  dsimp only [chunkedCt1SampledMergeSpec, chunkedCt1SampledMergeSpecOfEnv,
+    ChunkedCt1SampledMergePostEnv]
+  rw [hnone, htr, hx0]
+  refine Entails.pure_right rfl ?_
+  refine Entails.trans (Entails.of_eq (by sep_ac_rfl :
+    stackAt s0.sp chunkedMergeStack ∗
+      (decodeErrorAtStackLen A.repAlloc err n ∗
+        (chunkedCt1SampledPBAt A.repAlloc x.msgPtr m ∗
+          ((x.bufRef ↦₆₄ x.slot) ∗
+            (memRegion x.slot 16 ∗ ((x.ptr ↦ₛ x.bs) ∗ A.pool lim (M.stepEvents evs st) s))))) =
+    (x.bufRef ↦₆₄ x.slot) ∗
+      (A.pool lim (M.stepEvents evs st) s ∗
+        (stackAt s0.sp chunkedMergeStack ∗
+          (decodeErrorAtStackLen A.repAlloc err n ∗
+            (chunkedCt1SampledPBAt A.repAlloc x.msgPtr m ∗
+              (memRegion x.slot 16 ∗ (x.ptr ↦ₛ x.bs)))))))) ?_
+  exact sepConj_mono_right (sepConj_mono (pool_spqr_mono A lim st hvm hf hevs)
+    (sepConj_mono_right (Entails.pure_right herr
+      (sepConj_mono (decodeErrorWith_le3_ct1s A.repAlloc err hn)
+        (sepConj_mono_left (chunkedCt1SampledPBAt_entails_exists A.repAlloc x.msgPtr m))))))
+
+section ClPlaced
+
+set_option quotPrecheck false in
+local notation "entry" => (blkPl_300).base
+
+theorem ct1Sampled_err0_ret_exit_placed [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : String → Option (State → State)}
+    {x : ChunkedCt1SampledMergeGhost} {st : M.σ} {R : SepProp} {s0 : State}
+    {m : V1State.Chunked.Ct1Sampled} {s : State} {err : BitVec 64} {n f : Nat}
+    (hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none)
+    (hf : f ≤ 6 * x.bs.length + 12) (hn : n ≤ 3) (herr : err ≠ 0#64)
+    (hsp_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hpc : s.pc = (blkPl_300).base + 124#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 128#64)
+    (htr : s.trace = s0.trace) (hx1 : s.readReg64 (Reg.gpr 1#5) = err)
+    (hcs : ChunkedHighCalleeSaved s0 s) :
+    SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s
+      (decodeErrorAtStackLen A.repAlloc err n ∗ memRegion (s0.sp - 128#64) 48 ∗
+        chunkedBelow s0.sp ∗
+        ct1SampledErrFrame A lim st f (ct1SampledPolyCapBound x)
+          s0 s x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+      (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R) := by
+  obtain ⟨hx26, hx27, hx28, hvregs⟩ := hcs
+  apply sepWPpLscro_of_ret_vm
+  by_vm_steps
+    (conv => arg 4; simp only [ct1SampledErrFrame, spqrPoolAt, chunkedSavedRegs,
+      sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc,
+      sepConj_pure_left_comm, arm64_norm, hsp])
+    apply SepWP.exists_elim; intro evs
+    apply SepWP.pure_elim; intro hevs
+    wp_steps
+    apply SepWP.fold (stackAt_chunkedMerge_epilogue s0) (by unfold chunkedSavedRegs; sep_focus)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simp only [arm64_norm, wp_norm], fun hvm => ?_⟩
+    refine ⟨fun hm => Satisfies.of_entails hm (sepConj_mono_left ?_),
+      by simp only [arm64_norm, wp_norm, hsp],
+      by simp only [CalleeSavedPreserved, arm64_norm, wp_norm, hx26, hx27, hx28, hvregs]⟩
+    refine Entails.trans (Entails.of_eq (show _ =
+      stackAt s0.sp chunkedMergeStack ∗
+        (decodeErrorAtStackLen A.repAlloc err n ∗
+          (chunkedCt1SampledPBAt A.repAlloc x.msgPtr m ∗
+            ((x.bufRef ↦₆₄ x.slot) ∗
+              (memRegion x.slot 16 ∗ ((x.ptr ↦ₛ x.bs) ∗ A.pool lim (M.stepEvents evs st) s)))))
+      by sep_ac_rfl))
+      (ct1_err_exit_entails A lim st x s0 s _ m err n f evs hnone hvm hf hn herr
+        (by simp only [arm64_norm, wp_norm, htr])
+        (by simp only [arm64_norm, wp_norm, hx1]) hevs)
+
+theorem ct1Sampled_from_err_exit_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : String → Option (State → State)}
+    (hFromCall : subroutine_ok ((blkPC_300).rebase (blkPl_300).base H) (lsmpl.base 261)
+      (withLsCodeRoLoaded lsmpl (decodeErrorFromBudgetSpec M A lim)))
+    {x : ChunkedCt1SampledMergeGhost} {st : M.σ} {R : SepProp} {s0 : State}
+    {m : V1State.Chunked.Ct1Sampled} {s : State} {w v_stk0 : BitVec 64} {f : Nat}
+    (hFit : FitsEnv M lim st (ChunkedCt1SampledMergeEnv x))
+    (hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none)
+    (hf : f + 1 ≤ 6 * x.bs.length + 12)
+    (hw : KindNoHeap w) (hsp_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hpc : s.pc = (blkPl_300).base + 108#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 128#64)
+    (htr : s.trace = s0.trace) (hx8 : s.readReg64 (Reg.gpr 8#5) = w)
+    (hcs : ChunkedHighCalleeSaved s0 s) :
+    SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s
+      (((s0.sp - 128#64) ↦₆₄ v_stk0) ∗ memRegion (s0.sp - 120#64) 40 ∗
+        chunkedBelow s0.sp ∗
+        ct1SampledErrFrame A lim st f (ct1SampledPolyCapBound x)
+          s0 s x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+      (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R) := by
+  obtain ⟨hx26, hx27, hx28, hvregs⟩ := hcs
+  have herr0 := @ct1Sampled_err0_ret_exit_placed _ M A lim H x st R s0
+  apply sepWPpLscro_of_vm (mid := lsmpl.base 261)
+  by_vm_steps
+    (conv => arg 4; rw [chunkedBelow_err s0.sp, ct1SampledErrFrame, spqrPoolAt])
+    (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc, sepConj_pure_left_comm])
+    apply SepWP.exists_elim; intro evs
+    apply SepWP.pure_elim; intro hevs
+    wp_steps
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simp only [arm64_norm, wp_norm], fun hvm1 => ?_⟩
+    refine call_budget_lscro (x := (s0.sp - 128#64, w, M.stepEvents evs st))
+      (ret_pc := entry + 120#64) hFromCall
+      (by simp only [arm64_norm, wp_norm]) (by simp only [arm64_norm, wp_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm, wp_norm, hsp]; exact hsp_align)
+      (by simp only [arm64_norm, wp_norm])
+      (by dsimp only [decodeErrorFromBudgetSpec];
+          simp only [sepConj_assoc, A.pool_of_vmPreserved hvm1, arm64_norm, wp_norm, hsp, hx8]; try rfl)
+      (And.intro hw (fitsEnv_decodeErrorFrom_of_spqr hf hevs hFit))
+      (by sep_focus) ?_
+    intro sm hpcm hrunm hspm hcsm
+    simp only [CalleeSavedPreserved] at hcsm
+    obtain ⟨_, _, _, _, _, _, _, hx26_m, hx27_m, hx28_m, _, hvregs_m⟩ := hcsm
+    simp (config := { decide := true }) only [arm64_norm, wp_norm, hsp, hx26, hx27, hx28, hvregs]
+      at hpcm hspm hx26_m hx27_m hx28_m hvregs_m
+    apply sepWPpLscro_of_vm (mid := entry + 124#64)
+    by_vm_steps
+      (conv => arg 4; simp only [decodeErrorFromBudgetSpec,
+        sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+      apply SepWP.exists_elim; intro evs_f
+      apply SepWP.pure_elim; rintro ⟨⟨hsm0, htrm⟩, hevs_f⟩
+      apply SepWP.fold (chunkedBelow_err_entails s0.sp) (by sep_focus)
+      apply SepWP.fold (memRegion8_memRegion40_entails_48_128 s0.sp) (by sep_focus)
+      apply SepWP.fold
+        (pool_entails_spqrPoolAt_snoc A lim st (VmPreserved.refl sm) (Nat.le_refl (f + 1))
+          hevs (decodeErrorFromEnv_to_spqr hevs_f))
+        (by sep_focus)
+      wp_steps
+      apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+      rw [← spqrPoolAt_of_vmPreserved hvm2]
+      apply SepWPpLscro.weaken_pre
+        (P' := decodeErrorAtStackLen A.repAlloc (sm.readReg64 (Reg.gpr 0#5)) 0 ∗
+          memRegion (s0.sp - 128#64) 48 ∗ chunkedBelow s0.sp ∗
+          ct1SampledErrFrame A lim st (f + 1) (ct1SampledPolyCapBound x)
+            s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+        (by dsimp only [ct1SampledErrFrame]; sep_entail)
+      exact herr0 hnone hf (by decide : 0 ≤ 3) hsm0 hsp_align
+        (by simp only [arm64_norm, wp_norm])
+        (by simp only [arm64_norm, wp_norm, hrunm])
+        (by simp only [arm64_norm, wp_norm, hspm])
+        (by simp only [arm64_norm, wp_norm, htrm, htr])
+        (by simp only [arm64_norm, wp_norm])
+        ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+         by simp only [arm64_norm, wp_norm, hx27_m],
+         by simp only [arm64_norm, wp_norm, hx28_m],
+         by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+
+theorem ct1Sampled_push_err_exit_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : String → Option (State → State)}
+    (hPushCall : subroutine_ok ((blkPC_300).rebase (blkPl_300).base H) (lsmpl.base 257)
+      (withLsCodeRoLoaded lsmpl (decodeErrorPushMergeBudgetSpec M A lim)))
+    {x : ChunkedCt1SampledMergeGhost} {st : M.σ} {R : SepProp} {s0 : State}
+    {m : V1State.Chunked.Ct1Sampled} {s : State} {err : BitVec 64} {n f : Nat}
+    (hFit : FitsEnv M lim st (ChunkedCt1SampledMergeEnv x))
+    (hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none)
+    (hf : f + 1 ≤ 6 * x.bs.length + 12)
+    (herr : err ≠ 0#64) (hn : n ≤ 2) (hsp_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hpc : s.pc = (blkPl_300).base + 604#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 128#64)
+    (htr : s.trace = s0.trace) (hx0 : s.readReg64 (Reg.gpr 0#5) = s0.sp - 128#64)
+    (hcs : ChunkedHighCalleeSaved s0 s) :
+    SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s
+      (((s0.sp - 128#64) ↦₆₄ err) ∗ decodeErrorAtStackLen A.repAlloc err n ∗
+        memRegion (s0.sp - 120#64) 40 ∗ chunkedBelow s0.sp ∗
+        ct1SampledErrFrame A lim st f (ct1SampledPolyCapBound x)
+          s0 s x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+      (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R) := by
+  obtain ⟨hx26, hx27, hx28, hvregs⟩ := hcs
+  have herr0 := @ct1Sampled_err0_ret_exit_placed _ M A lim H x st R s0
+  apply sepWPpLscro_of_vm (mid := lsmpl.base 257)
+  by_vm_steps
+    (conv => arg 4; rw [chunkedBelow_err s0.sp, ct1SampledErrFrame, spqrPoolAt])
+    (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc, sepConj_pure_left_comm])
+    apply SepWP.exists_elim; intro evs
+    apply SepWP.pure_elim; intro hevs
+    wp_steps
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simp only [arm64_norm, wp_norm], fun hvm1 => ?_⟩
+    refine call_budget_lscro (x := (s0.sp - 128#64, err, n, M.stepEvents evs st))
+      (ret_pc := entry + 608#64) hPushCall
+      (by simp only [arm64_norm, wp_norm]) (by simp only [arm64_norm, wp_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm, wp_norm, hsp]; exact hsp_align)
+      (by simp only [arm64_norm, wp_norm])
+      (by dsimp only [decodeErrorPushMergeBudgetSpec];
+          simp only [sepConj_assoc, A.pool_of_vmPreserved hvm1, arm64_norm, wp_norm, hsp, hx0]; try rfl)
+      (And.intro (by omega : n < 2 ^ 32) (fitsEnv_decodeErrorPush_of_spqr (by omega) hf hevs hFit))
+      (by sep_focus) ?_
+    intro sm hpcm hrunm hspm hcsm
+    simp only [CalleeSavedPreserved] at hcsm
+    obtain ⟨_, _, _, _, _, _, _, hx26_m, hx27_m, hx28_m, _, hvregs_m⟩ := hcsm
+    simp (config := { decide := true }) only [arm64_norm, wp_norm, hsp, hx26, hx27, hx28, hvregs]
+      at hpcm hspm hx26_m hx27_m hx28_m hvregs_m
+    apply sepWPpLscro_of_vm (mid := entry + 124#64)
+    by_vm_steps
+      (conv => arg 4; simp only [decodeErrorPushMergeBudgetSpec,
+        sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+      apply SepWP.exists_elim; intro evs_p
+      apply SepWP.pure_elim; rintro ⟨htrm, hevs_p⟩
+      apply SepWP.fold (chunkedBelow_err_entails s0.sp) (by sep_focus)
+      apply SepWP.fold
+        (pool_entails_spqrPoolAt_snoc A lim st (VmPreserved.refl sm) (Nat.le_refl (f + 1))
+          hevs (decodeErrorPushEnv_to_spqr (by omega : n ≤ 4) hevs_p))
+        (by sep_focus)
+      wp_steps
+      apply SepWP.fold (pointsTo64_memRegion40_entails_48_128 s0.sp err) (by sep_focus)
+      apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+      rw [← spqrPoolAt_of_vmPreserved hvm2]
+      apply SepWPpLscro.weaken_pre
+        (P' := decodeErrorAtStackLen A.repAlloc err (n + 1) ∗
+          memRegion (s0.sp - 128#64) 48 ∗ chunkedBelow s0.sp ∗
+          ct1SampledErrFrame A lim st (f + 1) (ct1SampledPolyCapBound x)
+            s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+        (by dsimp only [ct1SampledErrFrame]; sep_entail)
+      exact herr0 hnone hf (by omega : n + 1 ≤ 3) herr hsp_align
+        (by simp only [arm64_norm, wp_norm])
+        (by simp only [arm64_norm, wp_norm, hrunm])
+        (by simp only [arm64_norm, wp_norm, hspm])
+        (by simp only [arm64_norm, wp_norm, htrm, htr])
+        (by simp only [arm64_norm, wp_norm])
+        ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+         by simp only [arm64_norm, wp_norm, hx27_m],
+         by simp only [arm64_norm, wp_norm, hx28_m],
+         by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+
+theorem ct1Sampled_loop_le_exit_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : String → Option (State → State)}
+    (hFromCall : subroutine_ok ((blkPC_300).rebase (blkPl_300).base H) (lsmpl.base 261)
+      (withLsCodeRoLoaded lsmpl (decodeErrorFromBudgetSpec M A lim)))
+    {x : ChunkedCt1SampledMergeGhost} {st : M.σ} {R : SepProp} {s0 s : State}
+    {m : V1State.Chunked.Ct1Sampled} {cur : List (BitVec 8)} {limit : Nat}
+    (hFit : FitsEnv M lim st (ChunkedCt1SampledMergeEnv x))
+    (hle_lim : cur.length ≤ limit) (hsp_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hcur_le : cur.length ≤ x.bs.length) (hcur_suf : IsDropSuffix x.bs cur) (hlim_lt : limit < 2 ^ 63)
+    (hres_cur : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption =
+      (mergeLoopBin V1State.Chunked.Ct1Sampled.mergeField (cur.length - limit) m cur limit 98).map
+        (fun m' => (m', x.bs.drop (x.bs.length - limit))))
+    (hpc : s.pc = (blkPl_300).base + 192#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 128#64) (htr : s.trace = s0.trace)
+    (hx21 : s.readReg64 (Reg.gpr 21#5) = x.slot)
+    (hx22 : s.readReg64 (Reg.gpr 22#5) = BitVec.ofNat 64 limit)
+    (hcs : ChunkedLoopRegs s0 s) :
+    SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s
+      (ct1SampledLoopPre A lim st s0 s x.msgPtr x.bufRef x.slot x.ptr m x.bs cur
+        (ct1SampledPolyCapBound x))
+      (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R) := by
+  obtain ⟨hx23, hx24, hx25, hx26, hx27, hx28, hvregs⟩ := hcs
+  let curPtr : BitVec 64 := x.ptr + BitVec.ofNat 64 (x.bs.length - cur.length)
+  by_cases heq_lim : cur.length = limit
+  · obtain ⟨hcmp1, hcmp2, hcmp3⟩ := cmp_len_limit_of_eq heq_lim
+    have hcur_eq_drop : x.bs.drop (x.bs.length - limit) = cur := by rw [← heq_lim]; exact hcur_suf.symm
+    have hsome : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+        (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = some (m, cur) := by
+      rw [hres_cur, mergeLoopBin_eq_limit _ _ _ _ _ _ heq_lim, Option.map_some, hcur_eq_drop]
+    apply sepWPpLscro_of_ret_vm
+    by_vm_steps
+      (conv => arg 4; simp only [ct1SampledLoopPre, spqrPoolAt,
+        sliceCursorAfter_eq_split hcur_le hcur_suf, sliceCursorAt, chunkedSavedRegs,
+        sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc,
+        sepConj_pure_left_comm, arm64_norm, hsp])
+      apply SepWP.exists_elim; intro evs
+      apply SepWP.pure_elim; intro hevs
+      wp_steps
+      apply SepWP.fold (stackAt_chunkedMerge_epilogue s0) (by unfold chunkedSavedRegs; sep_focus)
+      have hcur_fold :
+          (x.slot ↦₆₄ curPtr) ∗ ((x.slot + 8#64) ↦₆₄ BitVec.ofNat 64 cur.length) ∗
+            (x.ptr ↦ₛ x.bs.take (x.bs.length - cur.length)) ∗ (curPtr ↦ₛ cur) ⊢
+          sliceCursorAfter x.slot x.ptr x.bs cur := by
+        rw [sliceCursorAfter_eq_split hcur_le hcur_suf, sliceCursorAt]
+        exact Entails.of_eq (by sep_ac_rfl)
+      apply SepWP.fold hcur_fold (by dsimp only [curPtr]; sep_focus)
+      apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      refine ⟨by simp only [arm64_norm, wp_norm], fun hvm => ?_⟩
+      refine ⟨fun hm => Satisfies.of_entails hm (sepConj_mono_left ?_),
+        by simp only [arm64_norm, wp_norm, hsp],
+        by simp only [CalleeSavedPreserved, arm64_norm, wp_norm, hx26, hx27, hx28, hvregs]⟩
+      refine Entails.trans (Entails.of_eq (show _ =
+        stackAt s0.sp chunkedMergeStack ∗
+          (chunkedCt1SampledPBCapAt A.repAlloc x.msgPtr cur.length m ∗
+            ((x.bufRef ↦₆₄ x.slot) ∗
+              (sliceCursorAfter x.slot x.ptr x.bs cur ∗ A.pool lim (M.stepEvents evs st) s)))
+        by sep_ac_rfl))
+        (ct1_ok_exit_entails A lim st x s0 s _ m cur evs hsome hvm
+          (by simp only [arm64_norm, wp_norm, htr])
+          (by simp only [arm64_norm, wp_norm]) hevs)
+  · have hlt_lim : cur.length < limit := Nat.lt_of_le_of_ne hle_lim heq_lim
+    obtain ⟨hcmp1, hcmp2, hcmp3⟩ := cmp_len_limit_of_lt hlt_lim hlim_lt
+    have hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+        (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none := by
+      rw [hres_cur, mergeLoopBin_lt_limit _ _ _ _ _ _ hlt_lim, Option.map_none]
+    have hfrom_exit := @ct1Sampled_from_err_exit_cl_placed _ M A lim H hFromCall x st R s0 m
+    apply sepWPpLscro_of_vm (mid := entry + 108#64)
+    by_vm_steps
+      (conv => arg 4; rw [ct1SampledLoopPre, sliceCursorAfter_eq_split hcur_le hcur_suf,
+        sliceCursorAt, memRegion_48_split_128 s0.sp])
+      (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc])
+      apply SepWP.exists_elim; intro v_stk0
+      wp_steps
+      apply SepWP.fold (pointsTo64_pair_entails_memRegion16 x.slot curPtr (BitVec.ofNat 64 cur.length)) (by sep_focus)
+      apply SepWP.fold (pointsToBytes_prefix_join hcur_le hcur_suf) (by sep_focus)
+      apply SepWP.fold (chunkedCt1SampledPBCapAt_entails_pb A.repAlloc x.msgPtr cur.length m) (by sep_focus)
+      apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+      refine ⟨by simp only [arm64_norm, wp_norm], fun hvm1 => ?_⟩
+      apply SepWPpLscro.weaken_pre
+        (P' := ((s0.sp - 128#64) ↦₆₄ v_stk0) ∗ memRegion (s0.sp - 120#64) 40 ∗
+          chunkedBelow s0.sp ∗
+          ct1SampledErrFrame A lim st (6 * (x.bs.length - cur.length))
+            (ct1SampledPolyCapBound x) s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+        (by dsimp only [ct1SampledErrFrame]; rw [spqrPoolAt_of_vmPreserved hvm1]; sep_entail)
+      exact hfrom_exit hFit hnone (by omega) (by decide : KindNoHeap 0x8000000000000008#64) hsp_align
+        (by simp only [arm64_norm, wp_norm]) (by simp only [arm64_norm, wp_norm, hrun])
+        (by simp only [arm64_norm, wp_norm, hsp]) (by simp only [arm64_norm, wp_norm, htr])
+        (by simp only [arm64_norm, wp_norm])
+        ⟨by simp only [arm64_norm, wp_norm, hx26],
+         by simp only [arm64_norm, wp_norm, hx27],
+         by simp only [arm64_norm, wp_norm, hx28],
+         by simp only [arm64_norm, wp_norm, hvregs]⟩
+
+theorem ct1Sampled_decode_key_step_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : String → Option (State → State)}
+    (hFromCall : subroutine_ok ((blkPC_300).rebase (blkPl_300).base H) (lsmpl.base 261)
+      (withLsCodeRoLoaded lsmpl (decodeErrorFromBudgetSpec M A lim)))
+    (hVarintCall : subroutine_ok ((blkPC_300).rebase (blkPl_300).base H) (lsmpl.base 291)
+      (withLsCodeRoLoaded lsmpl (decodeVarint2Spec A lim)))
+    {x : ChunkedCt1SampledMergeGhost} {st : M.σ} {R : SepProp} {s0 s : State}
+    {m : V1State.Chunked.Ct1Sampled} {cur : List (BitVec 8)} {limit : Nat}
+    (hFit : FitsEnv M lim st (ChunkedCt1SampledMergeEnv x))
+    (hgt_lim : ¬ cur.length ≤ limit) (hsp_align : (s0.sp &&& 15#64 == 0#64) = true)
+    (hcur_le : cur.length ≤ x.bs.length) (hcur_lt : cur.length < 2 ^ 63) (hcur_suf : IsDropSuffix x.bs cur)
+    (hres_cur : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+      (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption =
+      (mergeLoopBin V1State.Chunked.Ct1Sampled.mergeField (cur.length - limit) m cur limit 98).map
+        (fun m' => (m', x.bs.drop (x.bs.length - limit))))
+    (hcont : ∀ (key : BitVec 64) (iwt : WireType) (rest : List (BitVec 8)) (s' : State),
+      decodeVarint cur = some (key, rest) → ¬ 2 ^ 32 ≤ key.toNat →
+      WireType.ofNat? (key.toNat % 8) = some iwt → ¬ key.toNat / 8 < 1 →
+      s'.pc = (blkPl_300).base + 244#64 →
+      s'.status = .Running → s'.sp = s0.sp - 128#64 → s'.trace = s0.trace →
+      s'.readReg64 (Reg.gpr 0#5) = BitVec.ofNat 64 iwt.toNat →
+      s'.readReg64 (Reg.gpr 1#5) = BitVec.ofNat 64 (key.toNat / 8) →
+      s'.readReg64 (Reg.gpr 19#5) = x.bufRef → s'.readReg64 (Reg.gpr 20#5) = x.msgPtr →
+      s'.readReg64 (Reg.gpr 21#5) = x.slot → s'.readReg64 (Reg.gpr 22#5) = BitVec.ofNat 64 limit →
+      ChunkedLoopRegs s0 s' →
+      SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s'
+        (ct1SampledLoopPre A lim st s0 s' x.msgPtr x.bufRef x.slot x.ptr m x.bs rest
+          (ct1SampledPolyCapBound x))
+        (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R))
+    (hpc : s.pc = (blkPl_300).base + 192#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 128#64) (htr : s.trace = s0.trace)
+    (hx19 : s.readReg64 (Reg.gpr 19#5) = x.bufRef) (hx20 : s.readReg64 (Reg.gpr 20#5) = x.msgPtr)
+    (hx21 : s.readReg64 (Reg.gpr 21#5) = x.slot)
+    (hx22 : s.readReg64 (Reg.gpr 22#5) = BitVec.ofNat 64 limit)
+    (hcs : ChunkedLoopRegs s0 s) :
+    SepWPpLscro lsmpl ((blkPC_300).rebase (blkPl_300).base H) (s0.readReg64 Reg.lr) s
+      (ct1SampledLoopPre A lim st s0 s x.msgPtr x.bufRef x.slot x.ptr m x.bs cur
+        (ct1SampledPolyCapBound x))
+      (WppPost (chunkedCt1SampledMergeSpec A lim) (x, st) R s0) (WppPanicFalse R) := by
+  obtain ⟨hx23, hx24, hx25, hx26, hx27, hx28, hvregs⟩ := hcs
+  obtain ⟨hcmp1, hcmp2⟩ := cmp_len_limit_of_gt hgt_lim hcur_lt
+  let curPtr : BitVec 64 := x.ptr + BitVec.ofNat 64 (x.bs.length - cur.length)
+  have herr0_exit := @ct1Sampled_err0_ret_exit_placed _ M A lim H x st R s0 m
+  have hfrom_exit := @ct1Sampled_from_err_exit_cl_placed _ M A lim H hFromCall x st R s0 m
+  apply sepWPpLscro_of_vm (mid := lsmpl.base 291)
+  by_vm_steps
+    (conv => arg 4; rw [ct1SampledLoopPre, spqrPoolAt,
+      sliceCursorAfter_eq_split hcur_le hcur_suf, sliceCursorAt, chunkedBelow_leaf s0.sp])
+    (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc, sepConj_pure_left_comm])
+    apply SepWP.exists_elim; intro evs
+    apply SepWP.pure_elim; intro hevs
+    wp_steps
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simp only [arm64_norm, wp_norm], fun hvm1 => ?_⟩
+    refine call_budget_lscro (x := (⟨x.bufRef, x.slot, curPtr, cur⟩, M.stepEvents evs st))
+      (ret_pc := entry + 212#64) hVarintCall
+      (by simp only [arm64_norm, wp_norm]) (by simp only [arm64_norm, wp_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm, wp_norm, hsp]; exact hsp_align)
+      (by simp only [arm64_norm, wp_norm])
+      (by dsimp only [decodeVarint2Spec, decodeVarint2SpecGen];
+          simp only [sepConj_assoc, A.pool_of_vmPreserved hvm1, stackAt_decodeVarint2_raw_eq, arm64_norm, wp_norm, hsp, hx19]; try rfl)
+      (And.intro hcur_lt (fitsEnv_decodeVarint2_of_spqr (by omega) hevs hFit))
+      (by dsimp only [sliceCursorAt, curPtr]; sep_focus) ?_
+    intro sm hpcm hrunm hspm hcsm
+    simp only [CalleeSavedPreserved] at hcsm
+    obtain ⟨hx19_m, hx20_m, hx21_m, hx22_m, hx23_m, hx24_m, hx25_m, hx26_m, hx27_m, hx28_m, _, hvregs_m⟩ := hcsm
+    simp (config := { decide := true }) only [arm64_norm, wp_norm, hsp,
+      hx19, hx20, hx21, hx22, hx23, hx24, hx25, hx26, hx27, hx28, hvregs]
+      at hpcm hrunm hspm hx19_m hx20_m hx21_m hx22_m hx23_m hx24_m hx25_m hx26_m hx27_m hx28_m hvregs_m
+    cases hd : decodeVarint cur with
+    | none =>
+      have hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+          (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none := by
+        rw [hres_cur, mergeLoopBin_of_decodeVarint_none protoPrefixStep_chunked_ct1Sampled_mergeField hgt_lim hd, Option.map_none]
+      apply sepWPpLscro_of_vm (mid := entry + 124#64)
+      by_vm_steps
+        (conv => arg 4; simp only [decodeVarint2Spec, decodeVarint2SpecGen,
+          stackAt_decodeVarint2_raw_eq, hd, sepExists_sepConj_left,
+          sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+        apply SepWP.exists_elim; intro evs_dv
+        apply SepWP.pure_elim; rintro ⟨⟨htrm, hevs_dv⟩, hsm0, hsm1⟩
+        apply SepWP.fold (chunkedBelow_leaf_entails s0.sp) (by sep_focus)
+        apply SepWP.fold (pointsToBytes_prefix_join hcur_le hcur_suf) (by sep_focus)
+        apply SepWP.fold (chunkedCt1SampledPBCapAt_entails_pb A.repAlloc x.msgPtr cur.length m) (by sep_focus)
+        apply SepWP.fold
+          (pool_entails_spqrPoolAt_snoc A lim st (VmPreserved.refl sm)
+            (Nat.le_refl (6 * (x.bs.length - cur.length) + 1))
+            hevs (decodeVarint2Env_to_spqr hevs_dv))
+          (by sep_focus)
+        wp_steps
+        apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+        refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+        rw [← spqrPoolAt_of_vmPreserved hvm2]
+        apply SepWPpLscro.weaken_pre
+          (P' := decodeErrorAtStackLen A.repAlloc (sm.readReg64 (Reg.gpr 1#5)) 0 ∗
+            memRegion (s0.sp - 128#64) 48 ∗ chunkedBelow s0.sp ∗
+            ct1SampledErrFrame A lim st (6 * (x.bs.length - cur.length) + 1)
+              (ct1SampledPolyCapBound x) s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+          (by dsimp only [ct1SampledErrFrame]; sep_entail)
+        exact herr0_exit hnone (by omega) (by decide : 0 ≤ 3) hsm1 hsp_align
+          (by simp only [arm64_norm, wp_norm])
+          (by simp only [arm64_norm, wp_norm, hrunm])
+          (by simp only [arm64_norm, wp_norm, hspm])
+          (by simp only [arm64_norm, wp_norm, htrm, htr])
+          (by simp only [arm64_norm, wp_norm])
+          ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+           by simp only [arm64_norm, wp_norm, hx27_m],
+           by simp only [arm64_norm, wp_norm, hx28_m],
+           by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+    | some p =>
+      rcases p with ⟨key, rest⟩
+      have hrest_lt_cur : rest.length < cur.length := decodeVarint_length hd
+      have hrest_le_cur : rest.length ≤ cur.length := Nat.le_of_lt hrest_lt_cur
+      have hrest_le : rest.length ≤ x.bs.length := Nat.le_trans hrest_le_cur hcur_le
+      have hrest_suf : IsDropSuffix x.bs rest := suffix_trans hcur_le hcur_suf hrest_le_cur (decodeVarint_suffix hd)
+      let restPtr : BitVec 64 := x.ptr + BitVec.ofNat 64 (x.bs.length - rest.length)
+      by_cases hk_ge : 2 ^ 32 ≤ key.toNat
+      · have hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+            (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none := by
+          rw [hres_cur, mergeLoopBin_of_key_ge protoPrefixStep_chunked_ct1Sampled_mergeField hgt_lim hd hk_ge, Option.map_none]
+        have hshr := key_shr32_of_ge hk_ge
+        apply sepWPpLscro_of_vm (mid := entry + 108#64)
+        by_vm_steps
+          (conv => arg 4; simp only [decodeVarint2Spec, decodeVarint2SpecGen,
+            stackAt_decodeVarint2_raw_eq, hd, sepExists_sepConj_left,
+            sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+          apply SepWP.exists_elim; intro evs_dv
+          apply SepWP.pure_elim; rintro ⟨⟨htrm, hevs_dv⟩, hsm0, hsm1⟩
+          apply SepWP.fold (chunkedBelow_leaf_entails s0.sp) (by sep_focus)
+          apply SepWP.fold (sliceCursorAfter_join hcur_le hcur_suf hrest_le_cur) (by sep_focus)
+          apply SepWP.fold (chunkedCt1SampledPBCapAt_entails_pb A.repAlloc x.msgPtr cur.length m) (by sep_focus)
+          apply SepWP.fold
+            (pool_entails_spqrPoolAt_nil A lim st (VmPreserved.refl sm)
+              (Nat.le_refl (6 * (x.bs.length - cur.length)))
+              hevs (decodeVarint2Env_eq_nil_of_some hd hevs_dv))
+            (by sep_focus)
+          (conv => arg 4; rw [sliceCursorAfter_eq_split hrest_le hrest_suf, sliceCursorAt, memRegion_48_split2_128 s0.sp])
+          (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc])
+          apply SepWP.exists_elim; intro v_err0
+          apply SepWP.exists_elim; intro v_err1
+          wp_steps
+          apply SepWP.fold (pointsTo64_pair_entails_memRegion16 x.slot restPtr (BitVec.ofNat 64 rest.length)) (by sep_focus)
+          apply SepWP.fold (pointsToBytes_prefix_join hrest_le hrest_suf) (by sep_focus)
+          have h40 : ((s0.sp - 128#64 + 8#64) ↦₆₄ key) ∗ memRegion (s0.sp - 112#64) 32 ⊢ memRegion (s0.sp - 120#64) 40 := by
+            rw [bv_sub_add_lit s0.sp 128 8]; exact pointsTo64_memRegion32_entails_40_128 s0.sp key
+          apply SepWP.fold h40 (by sep_focus)
+          apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+          refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+          rw [← spqrPoolAt_of_vmPreserved hvm2]
+          apply SepWPpLscro.weaken_pre
+            (P' := ((s0.sp - 128#64) ↦₆₄ v_err1) ∗ memRegion (s0.sp - 120#64) 40 ∗
+              chunkedBelow s0.sp ∗
+              ct1SampledErrFrame A lim st (6 * (x.bs.length - cur.length))
+                (ct1SampledPolyCapBound x) s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+            (by dsimp only [ct1SampledErrFrame]; sep_entail)
+          exact hfrom_exit hFit hnone (by omega) (by decide : KindNoHeap 0x8000000000000004#64) hsp_align
+            (by simp only [arm64_norm, wp_norm])
+            (by simp only [arm64_norm, wp_norm, hrunm])
+            (by simp only [arm64_norm, wp_norm, hspm])
+            (by simp only [arm64_norm, wp_norm, htrm, htr])
+            (by simp only [arm64_norm, wp_norm])
+            ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+             by simp only [arm64_norm, wp_norm, hx27_m],
+             by simp only [arm64_norm, wp_norm, hx28_m],
+             by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+      · have hshr := key_shr32_of_lt hk_ge
+        cases hwt : WireType.ofNat? (key.toNat % 8) with
+        | none =>
+          have hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+              (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none := by
+            rw [hres_cur, mergeLoopBin_of_wt_none protoPrefixStep_chunked_ct1Sampled_mergeField hgt_lim hd hk_ge hwt, Option.map_none]
+          obtain ⟨hcs1, hcs2⟩ := key_wt_none hwt
+          apply sepWPpLscro_of_vm (mid := entry + 108#64)
+          by_vm_steps
+            (conv => arg 4; simp only [decodeVarint2Spec, decodeVarint2SpecGen,
+              stackAt_decodeVarint2_raw_eq, hd, sepExists_sepConj_left,
+              sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+            apply SepWP.exists_elim; intro evs_dv
+            apply SepWP.pure_elim; rintro ⟨⟨htrm, hevs_dv⟩, hsm0, hsm1⟩
+            apply SepWP.fold (chunkedBelow_leaf_entails s0.sp) (by sep_focus)
+            apply SepWP.fold (sliceCursorAfter_join hcur_le hcur_suf hrest_le_cur) (by sep_focus)
+            apply SepWP.fold (chunkedCt1SampledPBCapAt_entails_pb A.repAlloc x.msgPtr cur.length m) (by sep_focus)
+            apply SepWP.fold
+              (pool_entails_spqrPoolAt_nil A lim st (VmPreserved.refl sm)
+                (Nat.le_refl (6 * (x.bs.length - cur.length)))
+                hevs (decodeVarint2Env_eq_nil_of_some hd hevs_dv))
+              (by sep_focus)
+            (conv => arg 4; rw [sliceCursorAfter_eq_split hrest_le hrest_suf, sliceCursorAt, memRegion_48_split2_128 s0.sp])
+            (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc])
+            apply SepWP.exists_elim; intro v_err0
+            apply SepWP.exists_elim; intro v_err1
+            wp_steps
+            apply SepWP.fold (pointsTo64_pair_entails_memRegion16 x.slot restPtr (BitVec.ofNat 64 rest.length)) (by sep_focus)
+            apply SepWP.fold (pointsToBytes_prefix_join hrest_le hrest_suf) (by sep_focus)
+            have h40 : ((s0.sp - 128#64 + 8#64) ↦₆₄ (key &&& 7#64)) ∗ memRegion (s0.sp - 112#64) 32 ⊢ memRegion (s0.sp - 120#64) 40 := by
+              rw [bv_sub_add_lit s0.sp 128 8]; exact pointsTo64_memRegion32_entails_40_128 s0.sp (key &&& 7#64)
+            apply SepWP.fold h40 (by sep_focus)
+            apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+            refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+            rw [← spqrPoolAt_of_vmPreserved hvm2]
+            apply SepWPpLscro.weaken_pre
+              (P' := ((s0.sp - 128#64) ↦₆₄ v_err1) ∗ memRegion (s0.sp - 120#64) 40 ∗
+                chunkedBelow s0.sp ∗
+                ct1SampledErrFrame A lim st (6 * (x.bs.length - cur.length))
+                  (ct1SampledPolyCapBound x) s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+              (by dsimp only [ct1SampledErrFrame]; sep_entail)
+            exact hfrom_exit hFit hnone (by omega) (by decide : KindNoHeap 0x8000000000000003#64) hsp_align
+              (by simp only [arm64_norm, wp_norm])
+              (by simp only [arm64_norm, wp_norm, hrunm])
+              (by simp only [arm64_norm, wp_norm, hspm])
+              (by simp only [arm64_norm, wp_norm, htrm, htr])
+              (by simp only [arm64_norm, wp_norm])
+              ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+               by simp only [arm64_norm, wp_norm, hx27_m],
+               by simp only [arm64_norm, wp_norm, hx28_m],
+               by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+        | some iwt =>
+          obtain ⟨hcc1, hcc2, hand_wt, hcc1_wt, hcc2_wt⟩ := key_wt_some hwt
+          obtain ⟨hw1, hw1_2⟩ := w1_tag_eq hk_ge
+          obtain ⟨hw1_zext1, hw1_zext2⟩ := bv32_zeroExtend_ofNat (n := key.toNat / 8) (by omega)
+          by_cases hitag0 : key.toNat / 8 < 1
+          · have hnone : (mergeMessage V1State.Chunked.Ct1Sampled.mergeField
+                (codecWireTypeToProto x.wt) x.msg x.bs 99).toOption = none := by
+              rw [hres_cur, mergeLoopBin_of_tag_zero protoPrefixStep_chunked_ct1Sampled_mergeField hgt_lim hd hk_ge hwt hitag0, Option.map_none]
+            have htag_zero : key.toNat / 8 = 0 := by omega
+            apply sepWPpLscro_of_vm (mid := entry + 108#64)
+            by_vm_steps
+              (conv => arg 4; simp only [decodeVarint2Spec, decodeVarint2SpecGen,
+                stackAt_decodeVarint2_raw_eq, hd, sepExists_sepConj_left,
+                sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+              apply SepWP.exists_elim; intro evs_dv
+              apply SepWP.pure_elim; rintro ⟨⟨htrm, hevs_dv⟩, hsm0, hsm1⟩
+              apply SepWP.fold (chunkedBelow_leaf_entails s0.sp) (by sep_focus)
+              apply SepWP.fold (sliceCursorAfter_join hcur_le hcur_suf hrest_le_cur) (by sep_focus)
+              apply SepWP.fold (chunkedCt1SampledPBCapAt_entails_pb A.repAlloc x.msgPtr cur.length m) (by sep_focus)
+              apply SepWP.fold
+                (pool_entails_spqrPoolAt_nil A lim st (VmPreserved.refl sm)
+                  (Nat.le_refl (6 * (x.bs.length - cur.length)))
+                  hevs (decodeVarint2Env_eq_nil_of_some hd hevs_dv))
+                (by sep_focus)
+              (conv => arg 4; rw [sliceCursorAfter_eq_split hrest_le hrest_suf, sliceCursorAt, memRegion_48_split_128 s0.sp])
+              (conv => arg 4; simp only [sepExists_sepConj_left, sepExists_sepConj_right, sepConj_assoc])
+              apply SepWP.exists_elim; intro v_err0
+              wp_steps
+              apply SepWP.fold (pointsTo64_pair_entails_memRegion16 x.slot restPtr (BitVec.ofNat 64 rest.length)) (by sep_focus)
+              apply SepWP.fold (pointsToBytes_prefix_join hrest_le hrest_suf) (by sep_focus)
+              apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+              refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+              rw [← spqrPoolAt_of_vmPreserved hvm2]
+              apply SepWPpLscro.weaken_pre
+                (P' := ((s0.sp - 128#64) ↦₆₄ v_err0) ∗ memRegion (s0.sp - 120#64) 40 ∗
+                  chunkedBelow s0.sp ∗
+                  ct1SampledErrFrame A lim st (6 * (x.bs.length - cur.length))
+                    (ct1SampledPolyCapBound x) s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs)
+                (by dsimp only [ct1SampledErrFrame]; sep_entail)
+              exact hfrom_exit hFit hnone (by omega) (by decide : KindNoHeap 0x8000000000000005#64) hsp_align
+                (by simp only [arm64_norm, wp_norm])
+                (by simp only [arm64_norm, wp_norm, hrunm])
+                (by simp only [arm64_norm, wp_norm, hspm])
+                (by simp only [arm64_norm, wp_norm, htrm, htr])
+                (by simp only [arm64_norm, wp_norm])
+                ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+                 by simp only [arm64_norm, wp_norm, hx27_m],
+                 by simp only [arm64_norm, wp_norm, hx28_m],
+                 by simp only [arm64_norm, wp_norm, hvregs_m]⟩
+          · obtain ⟨hcbz_tag1, hcbz_tag2⟩ := tag_cbz_false hk_ge hitag0
+            have hcbz_tag64 : (BitVec.ofNat 64 (key.toNat / 8) == 0#64) = false := by
+              rw [beq_eq_false_iff_ne]; intro h; have h1 := congrArg BitVec.toNat h
+              simp only [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega : key.toNat / 8 < 2 ^ 64)] at h1; omega
+            apply sepWPpLscro_of_vm (mid := entry + 244#64)
+            by_vm_steps
+              (conv => arg 4; simp only [decodeVarint2Spec, decodeVarint2SpecGen,
+                stackAt_decodeVarint2_raw_eq, hd, sepExists_sepConj_left,
+                sepExists_sepConj_right, sepConj_assoc, arm64_norm, wp_norm, hsp])
+              apply SepWP.exists_elim; intro evs_dv
+              apply SepWP.pure_elim; rintro ⟨⟨htrm, hevs_dv⟩, hsm0, hsm1⟩
+              apply SepWP.fold (chunkedBelow_leaf_entails s0.sp) (by sep_focus)
+              apply SepWP.fold (sliceCursorAfter_join hcur_le hcur_suf hrest_le_cur) (by sep_focus)
+              apply SepWP.fold (chunkedCt1SampledPBCapAt_mono A.repAlloc x.msgPtr m hrest_le_cur) (by sep_focus)
+              apply SepWP.fold
+                (pool_entails_spqrPoolAt_nil A lim st (VmPreserved.refl sm)
+                  (by omega : 6 * (x.bs.length - cur.length) ≤ 6 * (x.bs.length - rest.length))
+                  hevs (decodeVarint2Env_eq_nil_of_some hd hevs_dv))
+                (by sep_focus)
+              wp_steps
+              apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+              refine ⟨by simp only [arm64_norm, wp_norm], fun hvm2 => ?_⟩
+              rw [← spqrPoolAt_of_vmPreserved hvm2]
+              apply SepWPpLscro.weaken_pre
+                (P' := ct1SampledLoopPre A lim st s0 _ x.msgPtr x.bufRef x.slot x.ptr m x.bs rest
+                  (ct1SampledPolyCapBound x))
+                (by dsimp only [ct1SampledLoopPre]; sep_entail)
+              exact hcont key iwt rest _ hd hk_ge hwt hitag0
+                (by simp only [arm64_norm, wp_norm])
+                (by simp only [arm64_norm, wp_norm, hrunm])
+                (by simp only [arm64_norm, wp_norm, hspm])
+                (by simp only [arm64_norm, wp_norm, htrm, htr])
+                (by simp only [arm64_norm, wp_norm, hsm1, hand_wt])
+                (by simp only [arm64_norm, wp_norm, hsm1, hw1, hw1_2, hw1_zext1, hw1_zext2])
+                (by simp only [arm64_norm, wp_norm, hx19_m])
+                (by simp only [arm64_norm, wp_norm, hx20_m])
+                (by simp only [arm64_norm, wp_norm, hx21_m])
+                (by simp only [arm64_norm, wp_norm, hx22_m])
+                ⟨by simp only [arm64_norm, wp_norm, hx23_m],
+                 by simp only [arm64_norm, wp_norm, hx24_m],
+                 by simp only [arm64_norm, wp_norm, hx25_m],
+                 ⟨by simp only [arm64_norm, wp_norm, hx26_m],
+                  by simp only [arm64_norm, wp_norm, hx27_m],
+                  by simp only [arm64_norm, wp_norm, hx28_m],
+                  by simp only [arm64_norm, wp_norm, hvregs_m]⟩⟩
+
+end ClPlaced
+
+end LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.ChunkedCt1SampledBudgetAux

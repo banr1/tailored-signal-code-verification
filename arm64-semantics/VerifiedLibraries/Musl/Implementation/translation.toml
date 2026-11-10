@@ -1,0 +1,57 @@
+# Translation configuration for unmodified stock musl v1.2.5 AArch64 memory/string
+# primitives (`memcpy`, `memset`, `memmove`, `memcmp`, `bcmp`, `memchr`, `__memrchr`,
+# `memrchr`, `memccpy`, `mempcpy`, `memmem`) bundled in the pinned Rust 1.98.1
+# aarch64-unknown-linux-musl sysroot (`self-contained/libc.a`,
+# SHA-256 b03473b6f1efb72f700f561b4407a88885b37e0edb5cdb2a64de0df5499e813f).
+
+obj_name = "muslString"
+namespace_prefix = "VerifiedLibraries"
+title = "musl v1.2.5 AArch64 memory primitives (bundled in Rust 1.98.1 aarch64-unknown-linux-musl libc.a)"
+hashed_inputs = [
+    "build.sh",
+]
+license_header = [
+    "Copyright (c) 2005-2020 Rich Felker, et al.",
+    "Copyright (c) 2015-2018 ARM Limited.",
+    "Licensed under the MIT license (musl v1.2.5, bundled in Rust 1.98.1 aarch64-unknown-linux-musl self-contained/libc.a).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/musl_string_libca.o"]
+
+[[targets]]
+name = "musl_string"
+lean_file = "Musl/Generated/MuslStringFns.lean"
+sub_namespace = "Musl"
+prog_name = "muslStringBin"
+title = "musl v1.2.5 AArch64 memory primitives (bundled in Rust 1.98.1 aarch64-unknown-linux-musl libc.a)"
+lemma_allowlist = [
+    "memcpy",
+    "memset",
+    "memmove",
+    "memcmp",
+    "bcmp",
+    "memchr",
+    "__memrchr",
+    "memrchr",
+    "memccpy",
+    "mempcpy",
+    "memmem",
+    "twoway_memmem \\[musl_string_libca\\]",
+]
+
+[placed]
+placed_only = true
+exports = [
+    "memcpy",
+    "memset",
+    "memmove",
+    "memcmp",
+    "bcmp",
+    "memchr",
+    "__memrchr",
+    "memrchr",
+    "memccpy",
+    "mempcpy",
+    "memmem",
+]

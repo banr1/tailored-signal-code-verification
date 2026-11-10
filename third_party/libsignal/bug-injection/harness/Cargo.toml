@@ -1,0 +1,28 @@
+[package]
+name = "libsignal-bug-harness"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# The generic witness replayer of the bug-injection framework (`Symbolic/BugInjection/README.md`):
+# drives the `libsignal-cli` CLI binary on provisioned party directories from a witness-input file
+# and records the machine events of the statement's event table, as JSON. `scripts/bug_injection.py`
+# builds it against the control (libsignal v0.105.4) and each mutant (with a bug's patch).
+#
+# Never part of the verified image: `rust-obj2lean` does not read this crate, and nothing in the
+# Lean build depends on it. Standalone like the other crates here. The path dependencies resolve
+# against `libsignal-session/vendor/libsignal`; the runner builds a copy pointing at the control or
+# mutant checkout.
+
+[[bin]]
+name = "libsignal-bug-harness"
+path = "src/main.rs"
+
+[dependencies]
+libsignal-protocol = { path = "../../libsignal-session/vendor/libsignal/rust/protocol" }
+rand_core = { version = "=0.9.5", default-features = false }
+# The witness-input file and the output.
+serde_json = "1"
+
+[profile.release]
+# As libsignal's release profile: overflow checks on.
+overflow-checks = true

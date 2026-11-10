@@ -1,0 +1,36 @@
+# Lean 4 / Lake
+.lake/
+build/
+*.olean
+*.ilean
+*.trace
+*.ltar
+
+# Compiler output regenerated on demand from the `third_party/libsignal/` crates
+# (see `target rustExports` and `ensureRustExports` in `lakefile.lean`).
+/.GeneratedLean/
+
+# Mutant trace checkpoints regenerated on demand by `scripts/bug_injection.py gen-ckpt`
+# (and automatically before `scripts/bug_injection.py disproof`).
+/Symbolic/BugInjection/Disproofs/Impl/SmallSubgroup/Call[0-9]/
+/Symbolic/BugInjection/Disproofs/Impl/SmallSubgroup/Call[0-9][0-9]/
+/Symbolic/BugInjection/Disproofs/Impl/WeakState/Call[0-9]/
+/Symbolic/BugInjection/Disproofs/Impl/WeakState/Call[0-9][0-9]/
+
+# Rust / Cargo
+target/
+debug/
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+
+# The libsignal extraction crates resolve upstream sources through a symlink /
+# shallow clone; none is committed.
+/third_party/libsignal/libsignal-session/vendor/
+
+# Common OS / Editor / Python artifacts
+.DS_Store
+*.swp
+*~
+__pycache__/
+*.py[cod]

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Reproducible static AArch64 Rust ELF builder, `qemu-aarch64 -strace` vector regenerator,
+# and drift checker for `Arm64/Testing/ProcessE2E/`.
+#
+# Usage:
+#   scripts/process-e2e build [--check]
+#   scripts/process-e2e regen [--check]
+#   scripts/process-e2e report [--out <path>]
+#   scripts/process-e2e all [--check] [--report-out <path>]
+#
+# Examples:
+#   scripts/process-e2e build --check
+#   scripts/process-e2e regen --check
+#   scripts/process-e2e all --report-out /tmp/process-e2e-report.md
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+  exit 0
+fi
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec cargo run --release --locked --manifest-path "$REPO_ROOT/tools/Cargo.toml" \
+  --bin process_e2e -- --root "$REPO_ROOT" "$@"

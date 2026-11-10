@@ -1,0 +1,23 @@
+import Lean
+import ScratchFixture.PF2Pure
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.PF2Realizer
+
+open Lean Meta in
+#eval show MetaM Unit from do
+  realizeConst ``ScratchFixture.PF2Pure.pureFn `ScratchFixture.PF2Pure.pureFn.eq_1 do
+    let fnZero := mkApp (mkConst ``ScratchFixture.PF2Pure.pureFn) (mkConst ``Nat.zero)
+    let eqTy ← mkEq fnZero fnZero
+    let reflPf ← mkEqRefl fnZero
+    let stateType := mkConst ``Arm64.State
+    let sortType := mkSort (Level.succ Level.zero)
+    let val := Expr.letE `_pf2MachineWitness sortType stateType reflPf false
+    addDecl <| Declaration.thmDecl {
+      name := `ScratchFixture.PF2Pure.pureFn.eq_1
+      levelParams := []
+      type := eqTy
+      value := val
+    }
+
+end ScratchFixture.PF2Realizer

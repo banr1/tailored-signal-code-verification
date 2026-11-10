@@ -1,0 +1,136 @@
+# Translation configuration for upstream `musl` v1.2.5 AArch64 memory/string primitives
+# (`src/string/aarch64/memcpy.S`, `src/string/aarch64/memset.S`, `src/string/memmove.c`,
+# `src/string/memcmp.c`, `src/string/bcmp.c`, `src/string/memchr.c`, `src/string/memrchr.c`,
+# `src/string/memccpy.c`, `src/string/mempcpy.c`, and `src/string/memmem.c`),
+# plus F3 `rdl_shim.S` (`rustc 1.98.1` `std::sys::alloc::unix` global-allocator shims).
+
+obj_name = "muslString"
+title = "musl v1.2.5 AArch64 memory primitives (`src/string/`)"
+hashed_inputs = [
+    "string-include/features.h",
+    "string-include/string.h",
+    "rdl_shim.S",
+    "signal_session_io.S",
+    "../../third_party/musl-1.2.5/upstream/src/string/aarch64/memcpy.S",
+    "../../third_party/musl-1.2.5/upstream/src/string/aarch64/memset.S",
+    "../../third_party/musl-1.2.5/upstream/src/string/memmove.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/memcmp.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/bcmp.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/memchr.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/memrchr.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/memccpy.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/mempcpy.c",
+    "../../third_party/musl-1.2.5/upstream/src/string/memmem.c",
+]
+license_header = [
+    "Copyright (c) 2005-2020 Rich Felker, et al.",
+    "Copyright (c) 2015-2018 ARM Limited.",
+    "Licensed under the MIT license (musl v1.2.5, see `third_party/musl-1.2.5/COPYRIGHT`).",
+]
+
+[native_compiler]
+zig_version = "0.16.0"
+
+[[native_objects]]
+name = "memcpy"
+source = "../../third_party/musl-1.2.5/upstream/src/string/aarch64/memcpy.S"
+
+[[native_objects]]
+name = "memset"
+source = "../../third_party/musl-1.2.5/upstream/src/string/aarch64/memset.S"
+
+[[native_objects]]
+name = "memmove"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memmove.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "memcmp"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memcmp.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "bcmp"
+source = "../../third_party/musl-1.2.5/upstream/src/string/bcmp.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "memchr"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memchr.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "memrchr"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memrchr.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "memccpy"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memccpy.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "mempcpy"
+source = "../../third_party/musl-1.2.5/upstream/src/string/mempcpy.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[native_objects]]
+name = "memmem"
+source = "../../third_party/musl-1.2.5/upstream/src/string/memmem.c"
+include_dirs = ["string-include"]
+c_flags = ["-fno-builtin"]
+
+[[targets]]
+name = "musl_string"
+lean_file = "Examples/Generated/MuslStringFns.lean"
+sub_namespace = "MuslString"
+prog_name = "muslStringBin"
+title = "musl v1.2.5 AArch64 memory primitives (`src/string/`)"
+lemma_allowlist = [
+    "memcpy",
+    "memset",
+    "memmove",
+    "memcmp",
+    "bcmp",
+    "memchr",
+    "__memrchr",
+    "memrchr",
+    "memccpy",
+    "mempcpy",
+    "memmem",
+    "twobyte_memmem \\[memmem\\]",
+    "threebyte_memmem \\[memmem\\]",
+    "fourbyte_memmem \\[memmem\\]",
+    "twoway_memmem \\[memmem\\]",
+]
+
+[placed]
+placed_only = true
+exports = [
+    "memcpy",
+    "memset",
+    "memmove",
+    "memcmp",
+    "bcmp",
+    "memchr",
+    "__memrchr",
+    "memrchr",
+    "memccpy",
+    "mempcpy",
+    "memmem",
+]
+
+[[native_objects]]
+name = "rdl_shim"
+source = "rdl_shim.S"
+
+[[native_objects]]
+name = "signal_session_io"
+source = "signal_session_io.S"

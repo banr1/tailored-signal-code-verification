@@ -1,0 +1,10 @@
+{
+  "comment": "#450's cheval26-small-subgroup-high-bit-comp on the libsignal-cli CLI: Alice's first pre-key message delivered to Bob (no session yet) with the top bit of its base key set (base_key is protobuf field 2: 0x12 0x21 0x05 then 32 key bytes; byte 31 is at offset 34).",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "hello bob"}},
+    {"entry": "recv", "who": 1, "b": {"or_at": {"message_of": 1}, "after": {"hex": "122105"}, "offset": 34, "mask": "80"}}
+  ]
+}

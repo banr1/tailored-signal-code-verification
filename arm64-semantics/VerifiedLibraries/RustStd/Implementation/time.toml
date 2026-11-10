@@ -1,0 +1,28 @@
+# Translation configuration for unmodified Rust 1.98.1 `std::time` routines
+# (`<std::time::SystemTime>::duration_since` + internal `Timespec::sub_timespec` + `.rodata.cst16`
+# 16-byte constant, and `<std::time::SystemTime as core::ops::arith::Add<core::time::Duration>>::add`)
+# from the pinned `aarch64-unknown-linux-musl` sysroot (`libstd-32d384fccf68bbb7.rlib`,
+# SHA-256 0ab6dccc7d4304f3a0848dadb8820964d86747b75af12f3921f1d48a1d185579).
+
+obj_name = "time"
+namespace_prefix = "VerifiedLibraries.RustStd"
+obj_file = "RustStd/Generated/TimeObj.lean"
+title = "Rust 1.98.1 `std::time::SystemTime` (`aarch64-unknown-linux-musl` prebuilt `libstd.rlib`)"
+hashed_inputs = [
+    "build.sh",
+]
+license_header = [
+    "Copyright (c) The Rust Project Contributors.",
+    "Licensed under the Apache License, Version 2.0 or the MIT license (Rust 1.98.1 aarch64-unknown-linux-musl sysroot).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/rust_time.o"]
+
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "<std::time::SystemTime>::duration_since",
+    "<std::time::SystemTime as core::ops::arith::Add<core::time::Duration>>::add",
+]

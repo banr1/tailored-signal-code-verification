@@ -1,0 +1,10 @@
+import Lean
+
+namespace ScratchFixture.PF2Pure
+
+opaque pureFn : Nat → Nat := fun x => x
+
+#eval show Lean.CoreM Unit from
+  Lean.enableRealizationsForConst ``ScratchFixture.PF2Pure.pureFn
+
+end ScratchFixture.PF2Pure

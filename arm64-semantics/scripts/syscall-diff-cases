@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Copyright 2026 Google LLC
+#
+# All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Build the per-behavior SyscallDiff case binaries reproducibly, and run them under qemu-aarch64.
+#
+# Each `Arm64/Testing/SyscallDiff/src/cases/<name>.c` (which includes `sd_rt.h`) is compiled with
+# `zig cc` into a freestanding static `ET_EXEC` AArch64 ELF `Arm64/Testing/SyscallDiff/bin/<name>.elf`.
+# The ELFs are checked in; the differential runs live in
+# `Arm64/Testing/Regression/SyscallDiff.lean` (`syscallCaseTable`), run by
+# `unit_tests --syscall-diff`.
+#
+# Usage:
+#   scripts/syscall-diff-cases build [<name>...]   # (re)build all or the named cases into bin/
+#   scripts/syscall-diff-cases check               # rebuild into a temp dir; fail on any byte drift
+#   scripts/syscall-diff-cases probe [--check]     # (re)build or check bin/syscall_probe.elf from
+#                                                  # src/bin/syscall_probe.rs (pinned Rust 1.98.1)
+#   scripts/syscall-diff-cases qemu <name> [args]  # run bin/<name>.elf under qemu-aarch64 in a temp
+#                                                  # dir; print stdout, stderr and the exit status
+#   scripts/syscall-diff-cases diff <name> [args]  # dev loop: qemu-aarch64 vs Lean `elf_run`
+#   scripts/syscall-diff-cases list                # list case names (one per line)
+# `SD_STDIN=<string>` sets the guest's stdin for `qemu` / `diff` (default: empty).
+#
+# Examples:
+#   scripts/syscall-diff-cases check
+#   scripts/syscall-diff-cases build write_ok openat_enoent
+#   SD_STDIN=hello scripts/syscall-diff-cases diff readv_stdin
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$REPO/Arm64/Testing/SyscallDiff/src/cases"
+BIN="$REPO/Arm64/Testing/SyscallDiff/bin"
+ZIG_VERSION_PIN="0.16.0"
+RUST_VERSION_PIN="1.98.1"
+PROBE_TARGET="aarch64-unknown-linux-gnu"
+
+usage() { sed -n '9,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+case_names() {
+  local f
+  for f in "$SRC"/*.c; do
+    basename "$f" .c
+  done
+}
+
+compile_one() { # <name> <out.elf>
+  local name="$1" out="$2"
+  (cd "$SRC" && zig cc -target aarch64-linux-musl -static -nostdlib -ffreestanding -fno-builtin \
+    -fno-pie -no-pie -fno-stack-protector -fno-sanitize=all -fno-unwind-tables \
+    -fno-asynchronous-unwind-tables -mgeneral-regs-only -O1 -ffunction-sections -fdata-sections \
+    -Wall -Werror -Wl,--gc-sections -Wl,--build-id=none -Wl,--strip-all -Wl,-e,_start \
+    -o "$out" "$name.c")
+}
+
+run_qemu() { # <name> <tmpdir> [args...]: writes q.out, q.err, q.code; stdin = $SD_STDIN
+  local n="$1" t="$2"
+  shift 2
+  local qemu
+  qemu="$(command -v qemu-aarch64 || "$REPO/scripts/fetch-qemu-aarch64")"
+  mkdir -p "$t/cwd"
+  printf '%s' "${SD_STDIN:-}" >"$t/stdin.bin"
+  set +e
+  (cd "$t/cwd" && env -i "$qemu" "$BIN/$n.elf" "$@" <"$t/stdin.bin" >"$t/q.out" 2>"$t/q.err")
+  echo $? >"$t/q.code"
+  set -e
+}
+
+check_zig() {
+  command -v zig >/dev/null || { echo "error: zig not found in PATH" >&2; exit 1; }
+  local v
+  v="$(zig version)"
+  if [[ "$v" != "$ZIG_VERSION_PIN" ]]; then
+    echo "error: zig $v found; bin/*.elf are pinned to zig $ZIG_VERSION_PIN" >&2
+    exit 1
+  fi
+}
+
+# Build `src/bin/syscall_probe.rs` (freestanding `#![no_std]`) into <out.elf> with the pinned Rust
+# toolchain: one `rustc --emit=obj` plus a `rust-lld` link against the target's `libcore` and
+# `compiler_builtins` rlibs. Paths are remapped so the output does not depend on the checkout.
+build_probe() { # <out.elf>
+  local out="$1" rustc sysroot lib core_rlib cb_rlib lld tmp
+  rustc="$(rustup which --toolchain "$RUST_VERSION_PIN" rustc 2>/dev/null)" || {
+    echo "error: Rust $RUST_VERSION_PIN not installed (rustup toolchain install $RUST_VERSION_PIN --target $PROBE_TARGET)" >&2
+    return 1
+  }
+  sysroot="$("$rustc" --print sysroot)"
+  lib="$sysroot/lib/rustlib/$PROBE_TARGET/lib"
+  core_rlib="$(find "$lib" -name 'libcore-*.rlib' 2>/dev/null | head -n 1)"
+  cb_rlib="$(find "$lib" -name 'libcompiler_builtins-*.rlib' 2>/dev/null | head -n 1)"
+  lld="$(find "$sysroot" -name rust-lld | head -n 1)"
+  if [[ -z "$core_rlib" || -z "$cb_rlib" || -z "$lld" ]]; then
+    echo "error: Rust $RUST_VERSION_PIN lacks target $PROBE_TARGET (rustup target add --toolchain $RUST_VERSION_PIN $PROBE_TARGET)" >&2
+    return 1
+  fi
+  tmp="$(mktemp -d)"
+  (cd "$REPO" && env -u RUSTFLAGS LC_ALL=C "$rustc" --edition=2024 --target "$PROBE_TARGET" \
+    -C opt-level=s -C panic=abort -C relocation-model=static -C debuginfo=0 -C strip=symbols \
+    -C metadata=syscall_probe --remap-path-prefix="$REPO=." --remap-path-prefix="$sysroot=/rust" \
+    --emit=obj -o "$tmp/syscall_probe.o" Arm64/Testing/SyscallDiff/src/bin/syscall_probe.rs)
+  "$lld" -flavor gnu --build-id=none -static -nostdlib --gc-sections -e _start \
+    "$tmp/syscall_probe.o" "$core_rlib" "$cb_rlib" -o "$out"
+  rm -rf "$tmp"
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  build)
+    check_zig
+    mkdir -p "$BIN"
+    names=("$@")
+    if [[ ${#names[@]} -eq 0 ]]; then mapfile -t names < <(case_names); fi
+    for n in "${names[@]}"; do
+      compile_one "$n" "$BIN/$n.elf"
+      echo "built bin/$n.elf"
+    done
+    ;;
+  check)
+    check_zig
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    fail=0
+    while read -r n; do
+      compile_one "$n" "$tmp/$n.elf"
+      if ! cmp -s "$tmp/$n.elf" "$BIN/$n.elf"; then
+        echo "DRIFT: bin/$n.elf differs from a fresh build (or is missing)" >&2
+        fail=1
+      fi
+    done < <(case_names)
+    for f in "$BIN"/*.elf; do
+      n="$(basename "$f" .elf)"
+      if [[ "$n" != syscall_probe && ! -f "$SRC/$n.c" ]]; then
+        echo "ORPHAN: bin/$n.elf has no src/cases/$n.c" >&2
+        fail=1
+      fi
+    done
+    [[ $fail -eq 0 ]] && echo "syscall-diff-cases: all $(case_names | wc -l) case binaries reproduce"
+    exit $fail
+    ;;
+  probe)
+    if [[ "${1:-}" == --check ]]; then
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      build_probe "$tmp/syscall_probe.elf"
+      if ! cmp -s "$tmp/syscall_probe.elf" "$BIN/syscall_probe.elf"; then
+        echo "DRIFT: bin/syscall_probe.elf differs from a fresh build (or is missing)" >&2
+        exit 1
+      fi
+      echo "syscall-diff-cases: bin/syscall_probe.elf reproduces"
+    else
+      mkdir -p "$BIN"
+      build_probe "$BIN/syscall_probe.elf"
+      echo "built bin/syscall_probe.elf"
+    fi
+    ;;
+  qemu)
+    n="${1:?case name}"
+    shift
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    run_qemu "$n" "$tmp" "$@"
+    echo "--- stdout"
+    cat "$tmp/q.out"
+    echo "--- stderr"
+    cat "$tmp/q.err"
+    echo "--- exit $(cat "$tmp/q.code")"
+    ;;
+  diff)
+    # Developer loop only: compares qemu-aarch64 with the Lean model via `elf_run` (the paged
+    # runner). CI uses `unit_tests --syscall-diff` (`runElfImageFastMmap`).
+    n="${1:?case name}"
+    shift
+    elf_run="$REPO/Arm64/Testing/.lake/build/bin/elf_run"
+    [[ -x "$elf_run" ]] || { echo "error: build elf_run first: lake -d Arm64/Testing build elf_run" >&2; exit 1; }
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    run_qemu "$n" "$tmp" "$@"
+    python3 - "$n" "$tmp/req.json" "${SD_STDIN:-}" "$@" <<'PY'
+import json, sys
+name, out, stdin, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+json.dump({"argv": [name] + args, "dirs": [], "stdin_hex": stdin.encode().hex(),
+           "max_steps": 2000000}, open(out, "w"))
+PY
+    "$elf_run" run "$BIN/$n.elf" "$tmp/req.json" --out "$tmp/lean.json" >/dev/null || true
+    python3 - "$tmp" <<'PY'
+import json, sys, pathlib
+t = pathlib.Path(sys.argv[1])
+qo, qe, qc = (t / "q.out").read_bytes(), (t / "q.err").read_bytes(), int((t / "q.code").read_text())
+try:
+    r = json.loads((t / "lean.json").read_text())
+except Exception as e:
+    print(f"LEAN RUN FAILED: {e}"); sys.exit(1)
+lo, le = bytes.fromhex(r.get("stdout_hex", "")), bytes.fromhex(r.get("stderr_hex", ""))
+lc = r.get("exit_code")
+print(f"qemu: exit={qc}  lean: status={r.get('status')} exit={lc} signal={r.get('signal')} steps={r.get('steps')}")
+ok = qo == lo and qe == le and qc == lc
+ql, ll = qo.decode(errors="replace").splitlines(), lo.decode(errors="replace").splitlines()
+for i in range(max(len(ql), len(ll))):
+    a = ql[i] if i < len(ql) else "<none>"
+    b = ll[i] if i < len(ll) else "<none>"
+    print(("   " if a == b else "!! ") + f"qemu: {a!r:40} lean: {b!r}")
+if qe or le:
+    print(f"stderr qemu={qe!r}\nstderr lean={le!r}")
+print("MATCH" if ok else "MISMATCH")
+sys.exit(0 if ok else 1)
+PY
+    ;;
+  list)
+    case_names
+    ;;
+  -h | --help | "")
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

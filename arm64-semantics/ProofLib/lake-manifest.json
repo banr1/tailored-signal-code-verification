@@ -1,0 +1,13 @@
+{"version": "1.2.0",
+ "packagesDir": "../.lake/packages",
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "arm64",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../Arm64",
+   "configFile": "lakefile.toml"}],
+ "name": "prooflib",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

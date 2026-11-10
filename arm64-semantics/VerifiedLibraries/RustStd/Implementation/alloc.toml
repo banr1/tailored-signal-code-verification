@@ -1,0 +1,29 @@
+# Translation configuration for unmodified Rust 1.98.1 `alloc` formatting and `String` routines
+# (`alloc::fmt::format::format_inner`, `<String as core::fmt::Write>` vtable and methods,
+# `RawVecInner::{do_reserve_and_handle, finish_grow}`, and
+# `<alloc::string::String as core::clone::Clone>::clone`) from the pinned
+# `aarch64-unknown-linux-musl` sysroot (`liballoc-33b97f6bdb98e862.rlib`,
+# SHA-256 963b439cd8b6e922258cab604c3b8f0dfc0757fa8552911ddcb3127369422451).
+
+obj_name = "alloc"
+namespace_prefix = "VerifiedLibraries.RustStd"
+obj_file = "RustStd/Generated/AllocObj.lean"
+title = "Rust 1.98.1 `alloc::fmt` / `alloc::string` (`aarch64-unknown-linux-musl` prebuilt `liballoc.rlib`)"
+hashed_inputs = [
+    "build.sh",
+]
+license_header = [
+    "Copyright (c) The Rust Project Contributors.",
+    "Licensed under the Apache License, Version 2.0 or the MIT license (Rust 1.98.1 aarch64-unknown-linux-musl sysroot).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/rust_alloc.o"]
+
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "alloc::fmt::format::format_inner",
+    "<alloc::string::String as core::clone::Clone>::clone",
+]

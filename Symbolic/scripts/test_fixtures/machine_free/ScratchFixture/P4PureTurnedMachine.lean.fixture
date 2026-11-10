@@ -1,0 +1,9 @@
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.P4PureTurnedMachine
+
+def pureHelper : Nat := 42
+
+theorem drifted_machine_lemma (s : Arm64.State) : s = s := rfl
+
+end ScratchFixture.P4PureTurnedMachine

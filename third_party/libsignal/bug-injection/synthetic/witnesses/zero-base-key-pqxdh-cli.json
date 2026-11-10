@@ -1,0 +1,35 @@
+{
+  "comment": "Synthetic mutant for zero-base-key PQXDH handshake bypass: Alice initiates from Bob's honest bundle and sends 'hello bob'; an active attacker knowing DH(ikA, spkB) substitutes base_key = 0x05 || 0^32 while preserving Alice's honest Kyber-1024 ciphertext and SPQR pq_ratchet header, forging inner SignalMessage ciphertext+MAC for 'forged!!!' under DH2 = DH3 = 0^32, and Bob runs recv.",
+  "setup_seed": 23209,
+  "rng_seed": 41,
+  "calls": [
+    {
+      "entry": "init",
+      "b": {
+        "honest_bundle": true
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "hello bob"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "replace": {
+          "message_of": 1
+        },
+        "find": {
+          "hex": "0344122105abbb904f2c8f86f71332b8059313b1a1cbad7b332d85927b485e5b0e1049c34d1a21055af779b498d5843151f439cb89efff3ebd63f34cb8fd9ed756699f652d43013c228f01440a21055bfc85a3b08f59137240d42fa1308096a37310c86b3ae2bc820d6f0a37bfd33f100018002210fca4e87c39d39d1f29f41085ec2a6c7c2a250101010100a518128cbc63e038164b1444fc00f02030c1ecf98b5280e74c1797e90fdd8c0b3224008a6f1c2e3b4d4e5f9a0b1c2d3e4f5a6b01005d3e2f107a8b4c9d8e0fa1b2c3d4e5f601e92926fbc7cfaa3928d7083007380942a10c08"
+        },
+        "with": {
+          "hex": "034412210500000000000000000000000000000000000000000000000000000000000000001a21055af779b498d5843151f439cb89efff3ebd63f34cb8fd9ed756699f652d43013c228f01440a21055bfc85a3b08f59137240d42fa1308096a37310c86b3ae2bc820d6f0a37bfd33f100018002210950e0a352b102bbabfd49596e82584582a250101010100a518128cbc63e038164b1444fc00f02030c1ecf98b5280e74c1797e90fdd8c0b3224008a6f1c2e3b4d4e5f9a0b1c2d3e4f5a6b01005d3e2f107a8b4c9d8e0fa1b2c3d4e5f601fe520a628258d25a28d7083007380942a10c08"
+        }
+      }
+    }
+  ]
+}

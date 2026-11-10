@@ -1,0 +1,1152 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.Placed.BudgetPoolSync
+public meta import LibsignalBinary.Proofs.Placed.BudgetPoolSync -- shake: keep
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitClPlacedBudget
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitSubClPlacedBudgetAux
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.LoopCommonClPlacedBudget
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlaced
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlacedBudgetAux
+public import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopPlacedBudget
+import LibsignalBinary.Proofs.Common.SharedHelpers
+meta import LibsignalBinary.Proofs.Common.SharedHelpers -- shake: keep
+import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ChainLoopPlaced
+import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.V1StateStepPlaced
+import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.VersionNegotiation
+import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.VersionNegotiationLoop
+import LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.VersionNegotiationLoopPlaced
+import LibsignalBinary.Proofs.TripleRatchet.Prost.BytesMerge.Phase23
+import ProofLib.SepLogic.WP.Apply
+import ProofLib.SepLogic.WPp
+
+/-!
+# Budget-Threaded Code-Loaded Outer Loop, Prologue, and Top Theorem for `spqr::decode_state` (Block `325`)
+
+Proves budget-threaded code-loaded single-iteration stepping (`+116..+180`), outer-loop latch
+induction (`+1576`), non-empty prologue initialization (`+52..+116`), and top-level
+`decodeState_cl_placed_ok` contracts.
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option linter.unnecessarySimpa false
+
+namespace LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlacedBudget
+
+open Arm64 Arm64.Obj ProofLib ProofLib.ProgramReflection SepProp
+open scoped LibsignalBinary.Proofs.Placed.BudgetPoolSync
+open CryptoVerification (LibsignalPlacement lsmpl)
+open CryptoVerification.SpqrV1.Top.DecodeState.Placed (blkPC_325 blkPl_325)
+open scoped CryptoVerification.SpqrV1.Top.DecodeState.Placed
+open CryptoVerification.RustHeap (RustAlloc vecHeader vecU8At)
+open CryptoVerification.LibsignalTripleRatchetRepr (noneCap)
+open CryptoVerification.LibsignalProtoCodec (WireType decodeVarint)
+open CryptoVerification.LibsignalTripleRatchet (LibsignalCodeRoLoaded VecArg)
+open CryptoVerification.LibsignalTripleRatchet.Prost
+  (IsDropSuffix sliceCursorAfter sliceCursorAfter_eq_split sliceCursorAfter_join suffix_trans)
+open CryptoVerification.SpqrV1.Prost.MessageMerge
+  (codecWireTypeToProto mergeLoopBin mergeLoopBin_eq_limit
+   protoPrefixStep_pqRatchetState_mergeField v1StateJumpTablesPlacedAt v1StateMergeStack)
+open CryptoVerification.LibsignalSpqrV1
+  (ChainPB PqRatchetState V1State spqrDecodeState)
+open CryptoVerification.LibsignalSpqrV1.Proto (mergeMessage)
+open CryptoVerification.SpqrV1.Top.DecodeState
+  (DecodeStateGhost TraceVRegs V1InnerHeapPred decodeStatePlacedEntry decodeStatePlacedProg
+   decodeStateSavedAt decodeStateStackX decodeState_nonempty_frame_split
+   key_and7_of_wt_none key_and7_of_wt_some key_lsr32_eq_zero_of_lt key_lsr32_ne_zero_of_ge
+   key_lsr3_32_eq mergeLoopBin_of_decodeVarint_none mergeLoopBin_of_key_ge
+   mergeLoopBin_of_key_ok mergeLoopBin_of_tag_zero mergeLoopBin_of_wt_none
+   none3Cap optChainPBCapOkAt optProtoPqRatchetInnerCapOkAt
+   optVersionNegotiationPBCapOkAt pqRatchetState_default_eq
+   protoPqRatchetStateCapOkAt protoPqRatchetStateCapOkAt_mono
+   scratch_688_fold_48 scratch_688_split_48
+   sp_sub_1392_aligned stackAt_decodeState_entry_split
+   tag_cbz32_false tag_cbz64_false tag_lt_pow29_of_key_lt tag_setWidth32_ofNat
+   tag_zeroExtend64_ofNat32 vecArgRestAt vecArg_split_bytes wt_ult6)
+open LibsignalBinary.Heap
+  (AllocCostModel AllocEvent BudgetLimits FitsEnv RustCliAllocBudget)
+open LibsignalBinary.Proofs.SpqrV1.Varint.DecodeVarint2Budget (DecodeVarint2Env)
+open LibsignalBinary.Proofs.SpqrV1.Prost.MessageMerge.V1StateDefsBudget
+  (optInnerStatePolyCapBound optInnerStatePolyCapMax)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.SpecsBudget.FitsEnv
+  (decodeStateLoop_head decodeStateLoop_mono decodeStateLoop_split)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.SpecsBudget
+  (DecodeStateEnv DecodeStateIterEnv DecodeStateLoopEnv)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.SpecsPlacedBudget
+  (DecodeStatePlacedOk DecodeStatePlacedOkOfEnv DecodeStatePlacedOkX
+   spqrDecodeStatePlacedSpec spqrDecodeStatePlacedSpecOfEnv)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.SpecsClPlacedBudget
+  (DecodeStateCalleeContractsClPlacedX)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitPlacedBudget
+  (decodeStateEnv_of_loop decodeStateEnv_of_loop_free decodeStatePanicPostPlaced
+   decodeStatePanicPostPlacedOfEnv decodeStatePostPlaced decodeStatePostPlacedOfEnv)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitClPlacedBudget
+  (SepWPpIPlaced.of_sepWP_ret_lscl decodeState_err_tail_53df4_cl_placed_ofEnv)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitSubPlacedBudgetAux
+  (decodeStateErrFramePlaced decodeStateEnv_of_loop_from_free fitsEnv_decodeErrorFrom_of_loop)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.ErrorExitSubClPlacedBudgetAux
+  (decodeState_err_53af8_cl_placed_ofEnv decodeState_err_53b04_cl_placed_ofEnv
+   decodeState_err_53b10_cl_placed_ofEnv)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.LoopCommonPlacedBudget
+  (SepWPpIPlaced SepWPpIPlaced.of_sepWP decodeStateLoopCommonPlaced
+   loopCommon_calleeErr_to_errFrame_placed loopCommon_cursor_to_errFrame_placed)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.LoopCommonClPlacedBudget
+  (SepWPpIPlaced.call_decodeVarint2_cl)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.V1StateStepPlacedBudget
+  (pqRatchetStateV1OrDefault)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopPlacedBudgetAux
+  (decodeState_codecWireTypeToProto_eq
+   decodeState_empty_53ae0_placed decodeState_empty_53ae0_placed_ofEnv
+   spqrDecodeState_eq_of_mergeLoopBin_top_err spqrDecodeState_eq_of_mergeLoopBin_top_ok)
+open LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlacedBudgetAux
+  (decodeState_ok_exit_53b28_cl_placed decodeState_ok_exit_53b28_cl_placed_ofEnv
+   decodeState_outer_dispatch_5353c_cl_placed decodeState_outer_dispatch_5353c_cl_placed_ofEnv)
+
+export LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopPlacedBudgetAux
+  (decodeState_empty_53ae0_placed_ofEnv decodeState_empty_53ae0_placed)
+export LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlacedBudgetAux
+  (decodeState_ok_exit_53b28_cl_placed_ofEnv decodeState_ok_exit_53b28_cl_placed
+   decodeState_outer_dispatch_5353c_cl_placed_ofEnv decodeState_outer_dispatch_5353c_cl_placed)
+
+attribute [local irreducible] Program.fetch Program.externAt? Program.fnOff Program.fnAddr Obj.lookup v1StateJumpTablesPlacedAt
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+attribute [local irreducible] mergeMessage mergeLoopBin CryptoVerification.LibsignalSpqrV1.Proto.spqrDecodeState
+
+/-! ## 1. Single Outer-Loop Iteration (`+116..+180`, Code-Loaded) -/
+
+/-- Envelope-parameterized code-loaded single outer-loop iteration (`+116..+180`) when
+`¬ cur.length ≤ 0`: decodes the field key via `decodeVarint2` and dispatches to the corresponding
+field handler, reaching `entry + 1576` on success while charging at most
+`16 * (cur.length - rest2.length)` `DecodeStateIterEnv` steps. -/
+theorem decodeState_outer_body_53510_cl_placed_ofEnv [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {PreEnv PostEnv : DecodeStateGhost → List AllocEvent → Prop}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 st : M.σ) (evs_acc : List AllocEvent) (f rem : Nat)
+    (w0 : BitVec 64) (curSt : PqRatchetState)
+    (cur : List (BitVec 8)) (hgt : ¬ cur.length ≤ 0)
+    (hcur_le : cur.length ≤ x.st.bytes.length) (hcur_suf : IsDropSuffix x.st.bytes cur)
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hlinks : (curSt.chain.getD default).links.length + cur.length ≤ 2 * x.st.bytes.length + 4)
+    (hpoly : optInnerStatePolyCapBound (pqRatchetStateV1OrDefault curSt).innerState cur.length ≤
+      2 * x.st.bytes.length + 16)
+    (herr_of_none : mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = none →
+      spqrDecodeState x.st.bytes = .error .stateDecode)
+    (hacc : DecodeStateLoopEnv f x.st.bytes.length (2 * x.st.bytes.length + 16) evs_acc)
+    (hst : M.stepEvents evs_acc st0 = st)
+    (hFit : FitsEnv M lim st
+      (DecodeStateLoopEnv rem x.st.bytes.length (2 * x.st.bytes.length + 16)))
+    (hrem : 16 * cur.length + 32 ≤ rem)
+    (hf : f + 16 * cur.length + 32 ≤ 16 * x.st.bytes.length + 32)
+    (s0 s : State) (P R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+    (hpost_env : ∀ evs, DecodeStateEnv x evs → PostEnv x evs)
+    (hs0A : s0.spAligned = true)
+    (hpc : s.pc = decodeStatePlacedEntry + 116#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 1392#64) (htr : TraceVRegs s s0)
+    (hx19 : s.readReg64 .x19 = x.outPtr)
+    (hx21 : s.readReg64 .x21 = 0x8000000000000006#64) (hx22 : s.readReg64 .x22 = s0.sp - 1040#64)
+    (hx23 : s.readReg64 .x23 = -1#64) (hx24 : s.readReg64 .x24 = s0.sp - 912#64)
+    (hx25 : s.readReg64 .x25 = s0.sp - 688#64) (hx26 : s.readReg64 .x26 = -2#64)
+    (hx27 : s.readReg64 .x27 = 8#64) (hx28 : s.readReg64 .x28 = 1#64)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64)
+    (hP : P = ((s0.sp - 688#64) ↦₆₄ w0) ∗
+      sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes cur ∗
+      protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) cur.length curSt ∗
+      memRegion (s0.sp - 680#64) 40 ∗ memRegion (s0.sp - 640#64) 304 ∗
+      decodeStateLoopCommonPlaced A lim st x s0 s)
+    (hnext : ∀ (w0' : BitVec 64) (st' : PqRatchetState) (rest2 : List (BitVec 8))
+        (evs_iter : List AllocEvent) (sf : State) (P' : SepProp),
+      rest2.length < cur.length → rest2.length ≤ x.st.bytes.length →
+      IsDropSuffix x.st.bytes rest2 →
+      mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 =
+        mergeLoopBin PqRatchetState.mergeField rest2.length st' rest2 0 100 →
+      (st'.chain.getD default).links.length + rest2.length ≤ 2 * x.st.bytes.length + 4 →
+      optInnerStatePolyCapBound (pqRatchetStateV1OrDefault st').innerState rest2.length ≤
+        2 * x.st.bytes.length + 16 →
+      DecodeStateLoopEnv (f + 16 * (cur.length - rest2.length)) x.st.bytes.length
+        (2 * x.st.bytes.length + 16) (evs_acc ++ evs_iter) →
+      M.stepEvents (evs_acc ++ evs_iter) st0 = M.stepEvents evs_iter st →
+      FitsEnv M lim (M.stepEvents evs_iter st)
+        (DecodeStateLoopEnv (rem - 16 * (cur.length - rest2.length)) x.st.bytes.length
+          (2 * x.st.bytes.length + 16)) →
+      sf.pc = decodeStatePlacedEntry + 1576#64 →
+      sf.status = .Running → sf.sp = s0.sp - 1392#64 → TraceVRegs sf s0 →
+      sf.readReg64 .x19 = x.outPtr → sf.readReg64 .x20 = BitVec.ofNat 64 rest2.length →
+      sf.readReg64 .x21 = 0x8000000000000006#64 → sf.readReg64 .x22 = s0.sp - 1040#64 →
+      sf.readReg64 .x23 = -1#64 → sf.readReg64 .x24 = s0.sp - 912#64 →
+      sf.readReg64 .x25 = s0.sp - 688#64 → sf.readReg64 .x26 = -2#64 →
+      sf.readReg64 .x27 = 8#64 → sf.readReg64 .x28 = 1#64 → sf.readReg64 .x29 = s0.sp - 96#64 →
+      P' = ((s0.sp - 688#64) ↦₆₄ w0') ∗
+        sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes rest2 ∗
+        protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) rest2.length st' ∗
+        memRegion (s0.sp - 680#64) 40 ∗ memRegion (s0.sp - 640#64) 304 ∗
+        decodeStateLoopCommonPlaced A lim (M.stepEvents evs_iter st) x s0 sf →
+      SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) sf P' post
+        (decodeStatePanicPostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+      (decodeStatePanicPostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R) := by
+  have hdv_call := hc.decodeVarint2
+  subst hP
+  rw [sliceCursorAfter_eq_split hcur_le hcur_suf]
+  dsimp only [decodeStatePlacedProg, decodeStatePlacedEntry, decodeStateLoopCommonPlaced] at hpc hdv_call ⊢
+  apply SepWPpIPlaced.of_sepWP (mid := lsmpl.base 291)
+  wp_steps_sync_pool (lsmpl.base 291)
+  try simp only [State.setMem_setMem]
+  apply SepWP.done (by simp only [wp_norm, arm64_norm]) (by simp only [wp_norm, arm64_norm, hrun])
+  have hx29_f0 : s0.sp - 96#64 - 240#64 = s0.sp - 336#64 := by bv_omega
+  refine SepWPpIPlaced.call_decodeVarint2_cl hdv_call
+    (s0.sp - 336#64) (s0.sp - 1056#64)
+    (x.st.ptr + BitVec.ofNat 64 (x.st.bytes.length - cur.length)) cur st
+    (ret_pc := (blkPl_325).base + 124#64)
+    (hpc := by simp only [wp_norm, arm64_norm])
+    (hrun := by simp only [wp_norm, arm64_norm, hrun])
+    (hsp := by simp only [wp_norm, arm64_norm, hsp]) (hs0A := hs0A)
+    (hlr := by simp only [wp_norm, arm64_norm])
+    (htr := by simp only [wp_norm, arm64_norm, htr])
+    (hx0 := by simp only [wp_norm, arm64_norm, hx29, hx29_f0])
+    (hlen := by omega)
+    (hfits := decodeStateLoop_head (fuel := rem - 1)
+      (fun _ h => DecodeStateIterEnv.of_decodeVarint2 h)
+      (decodeStateLoop_mono (by omega) (Nat.le_refl _) (Nat.le_refl _) hFit))
+    (hP := by sep_focus) ?_ ?_
+  · intro s1 key rest1 evs_dv hdv hevs_dv hlt1 hsuf1 hpc1 hrun1 hsp1 htr1 hcs1 hx0_0 hx1_key
+    have hle1 : rest1.length ≤ cur.length := Nat.le_of_lt hlt1
+    have hrest1_le : rest1.length ≤ x.st.bytes.length := Nat.le_trans hle1 hcur_le
+    have hrest1_suf : IsDropSuffix x.st.bytes rest1 := suffix_trans hcur_le hcur_suf hle1 hsuf1
+    have hdv_l : DecodeStateLoopEnv 1 x.st.bytes.length (2 * x.st.bytes.length + 16) evs_dv :=
+      DecodeStateLoopEnv.single (fuel := 0) (DecodeStateIterEnv.of_decodeVarint2 hevs_dv)
+    have hacc1 : DecodeStateLoopEnv (f + 1) x.st.bytes.length
+        (2 * x.st.bytes.length + 16) (evs_acc ++ evs_dv) :=
+      hacc.append hdv_l
+    have hst1 : M.stepEvents (evs_acc ++ evs_dv) st0 = M.stepEvents evs_dv st := by
+      rw [M.stepEvents_append, hst]
+    have hFit1 : FitsEnv M lim (M.stepEvents evs_dv st)
+        (DecodeStateLoopEnv (rem - 1) x.st.bytes.length (2 * x.st.bytes.length + 16)) :=
+      decodeStateLoop_split hdv_l
+        (decodeStateLoop_mono (by omega) (Nat.le_refl _) (Nat.le_refl _) hFit)
+    rcases hcs1 with ⟨hx19_1, hx20_1, hx21_1, hx22_1, hx23_1, hx24_1, hx25_1, hx26_1, hx27_1, hx28_1, hx29_1, hvregs_1⟩
+    simp only [arm64_norm, wp_norm] at hx0_0 hx1_key hx19_1 hx20_1 hx21_1 hx22_1 hx23_1 hx24_1 hx25_1 hx26_1 hx27_1 hx28_1 hx29_1
+    by_cases hk : 2 ^ 32 ≤ key.toNat
+    · -- key ≥ 2 ^ 32
+      have hk_ne : (key >>> 32 == 0#64) = false := key_lsr32_ne_zero_of_ge hk
+      apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 1628#64)
+      wp_steps 4
+      refine SepWP.fold (sliceCursorAfter_join (slot := s0.sp - 1056#64) (ptr := x.st.ptr)
+        hcur_le hcur_suf hle1) (by sep_focus) ?_
+      refine SepWP.fold (loopCommon_cursor_to_errFrame_placed H_inner A lim
+        (M.stepEvents evs_dv st) x rest1 cur.length curSt s0 s1)
+        (by dsimp only [decodeStateLoopCommonPlaced]; sep_focus) ?_
+      apply SepWP.done
+        (by simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_ne])
+        (by simp only [wp_norm, arm64_norm, hrun1])
+      exact decodeState_err_53af8_cl_placed_ofEnv
+        hc.toDecodeStateCalleeContractsClPlaced x st0 (M.stepEvents evs_dv st) curSt w0
+        s0 _ _ R post hpost
+        (herr_of_none (mergeLoopBin_of_key_ge protoPrefixStep_pqRatchetState_mergeField hgt hdv hk))
+        (fitsEnv_decodeErrorFrom_of_loop (by omega) hFit1)
+        (fun evs_fr evs_f hfr hf_evs => by
+          obtain ⟨evs, hevs, heq⟩ :=
+            decodeStateEnv_of_loop_from_free (by omega) hacc1 hst1 evs_fr evs_f hfr hf_evs
+          exact ⟨evs, hpost_env evs hevs, heq⟩)
+        (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_ne])
+        (by simp only [wp_norm, arm64_norm, hrun1]) (by simp only [wp_norm, arm64_norm, hsp1]) hs0A
+        (by simp only [wp_norm, arm64_norm, htr1])
+        (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+        (by
+          dsimp only [decodeStateErrFramePlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+            Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+          try simp only [wp_norm, arm64_norm]
+          sep_ac_rfl)
+    · -- key < 2 ^ 32
+      have hk_zero : key >>> 32 = 0#64 := key_lsr32_eq_zero_of_lt hk
+      rcases hwt : WireType.ofNat? (key.toNat % 8) with _ | iwt
+      · -- invalid wire type
+        rcases key_and7_of_wt_none hwt with hand7 | hand7
+        · apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 1640#64)
+          wp_steps 7
+          refine SepWP.fold (sliceCursorAfter_join (slot := s0.sp - 1056#64) (ptr := x.st.ptr)
+            hcur_le hcur_suf hle1) (by sep_focus) ?_
+          refine SepWP.fold (loopCommon_cursor_to_errFrame_placed H_inner A lim
+            (M.stepEvents evs_dv st) x rest1 cur.length curSt s0 s1)
+            (by dsimp only [decodeStateLoopCommonPlaced]; sep_focus) ?_
+          apply SepWP.done
+            (by simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7])
+            (by simp only [wp_norm, arm64_norm, hrun1])
+          exact decodeState_err_53b04_cl_placed_ofEnv
+            hc.toDecodeStateCalleeContractsClPlaced x st0 (M.stepEvents evs_dv st) curSt w0
+            s0 _ _ R post hpost
+            (herr_of_none (mergeLoopBin_of_wt_none protoPrefixStep_pqRatchetState_mergeField hgt hdv hk hwt))
+            (fitsEnv_decodeErrorFrom_of_loop (by omega) hFit1)
+            (fun evs_fr evs_f hfr hf_evs => by
+              obtain ⟨evs, hevs, heq⟩ :=
+                decodeStateEnv_of_loop_from_free (by omega) hacc1 hst1 evs_fr evs_f hfr hf_evs
+              exact ⟨evs, hpost_env evs hevs, heq⟩)
+            (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7])
+            (by simp only [wp_norm, arm64_norm, hrun1]) (by simp only [wp_norm, arm64_norm, hsp1]) hs0A
+            (by simp only [wp_norm, arm64_norm, htr1])
+            (by simp only [wp_norm, arm64_norm, *])
+            (by
+              dsimp only [decodeStateErrFramePlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+                Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+              try simp only [wp_norm, arm64_norm]
+              sep_ac_rfl)
+        · apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 1640#64)
+          wp_steps 7
+          refine SepWP.fold (sliceCursorAfter_join (slot := s0.sp - 1056#64) (ptr := x.st.ptr)
+            hcur_le hcur_suf hle1) (by sep_focus) ?_
+          refine SepWP.fold (loopCommon_cursor_to_errFrame_placed H_inner A lim
+            (M.stepEvents evs_dv st) x rest1 cur.length curSt s0 s1)
+            (by dsimp only [decodeStateLoopCommonPlaced]; sep_focus) ?_
+          apply SepWP.done
+            (by simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7])
+            (by simp only [wp_norm, arm64_norm, hrun1])
+          exact decodeState_err_53b04_cl_placed_ofEnv
+            hc.toDecodeStateCalleeContractsClPlaced x st0 (M.stepEvents evs_dv st) curSt w0
+            s0 _ _ R post hpost
+            (herr_of_none (mergeLoopBin_of_wt_none protoPrefixStep_pqRatchetState_mergeField hgt hdv hk hwt))
+            (fitsEnv_decodeErrorFrom_of_loop (by omega) hFit1)
+            (fun evs_fr evs_f hfr hf_evs => by
+              obtain ⟨evs, hevs, heq⟩ :=
+                decodeStateEnv_of_loop_from_free (by omega) hacc1 hst1 evs_fr evs_f hfr hf_evs
+              exact ⟨evs, hpost_env evs hevs, heq⟩)
+            (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7])
+            (by simp only [wp_norm, arm64_norm, hrun1]) (by simp only [wp_norm, arm64_norm, hsp1]) hs0A
+            (by simp only [wp_norm, arm64_norm, htr1])
+            (by simp only [wp_norm, arm64_norm, *])
+            (by
+              dsimp only [decodeStateErrFramePlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+                Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+              try simp only [wp_norm, arm64_norm]
+              sep_ac_rfl)
+      · -- valid wire type iwt
+        have hand7 : key &&& 7#64 = BitVec.ofNat 64 iwt.toNat := key_and7_of_wt_some hwt
+        have ⟨hwt_ult, hwt_ule⟩ := wt_ult6 iwt
+        have hlsr3 : BitVec.truncate 32 key >>> 3 = BitVec.ofNat 32 (key.toNat / 8) := key_lsr3_32_eq hk
+        have hlsr3_64 : BitVec.zeroExtend 64 (BitVec.truncate 32 key) >>> 3 = BitVec.ofNat 64 (key.toNat / 8) := by
+          apply BitVec.eq_of_toNat_eq
+          rw [BitVec.toNat_ushiftRight, BitVec.toNat_setWidth, BitVec.toNat_setWidth,
+            Nat.shiftRight_eq_div_pow, BitVec.toNat_ofNat]
+          change ((key.toNat % 4294967296) % 18446744073709551616) / 8 = (key.toNat / 8) % 18446744073709551616
+          rw [Nat.mod_eq_of_lt (by omega : key.toNat < 4294967296),
+            Nat.mod_eq_of_lt (by omega : key.toNat < 18446744073709551616),
+            Nat.mod_eq_of_lt (by omega : key.toNat / 8 < 18446744073709551616)]
+        have htag29 : key.toNat / 8 < 2 ^ 29 := tag_lt_pow29_of_key_lt hk
+        have hze : BitVec.zeroExtend 64 (BitVec.ofNat 32 (key.toNat / 8)) = BitVec.ofNat 64 (key.toNat / 8) :=
+          tag_zeroExtend64_ofNat32 htag29
+        have htw32 : BitVec.truncate 32 (BitVec.ofNat 64 (key.toNat / 8)) = BitVec.ofNat 32 (key.toNat / 8) :=
+          tag_setWidth32_ofNat (key.toNat / 8)
+        by_cases htag0 : key.toNat / 8 < 1
+        · -- tag = 0
+          have htag_eq0 : key.toNat / 8 = 0 := by omega
+          apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 1652#64)
+          wp_steps 9
+          refine SepWP.fold (sliceCursorAfter_join (slot := s0.sp - 1056#64) (ptr := x.st.ptr)
+            hcur_le hcur_suf hle1) (by sep_focus) ?_
+          refine SepWP.fold (loopCommon_cursor_to_errFrame_placed H_inner A lim
+            (M.stepEvents evs_dv st) x rest1 cur.length curSt s0 s1)
+            (by dsimp only [decodeStateLoopCommonPlaced]; sep_focus) ?_
+          apply SepWP.done
+            (by simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7, hwt_ult, hwt_ule, hlsr3, hlsr3_64, hze, htw32, htag_eq0])
+            (by simp only [wp_norm, arm64_norm, hrun1])
+          exact decodeState_err_53b10_cl_placed_ofEnv
+            hc.toDecodeStateCalleeContractsClPlaced x st0 (M.stepEvents evs_dv st) curSt w0
+            s0 _ _ R post hpost
+            (herr_of_none (mergeLoopBin_of_tag_zero protoPrefixStep_pqRatchetState_mergeField hgt hdv hk hwt htag0))
+            (fitsEnv_decodeErrorFrom_of_loop (by omega) hFit1)
+            (fun evs_fr evs_f hfr hf_evs => by
+              obtain ⟨evs, hevs, heq⟩ :=
+                decodeStateEnv_of_loop_from_free (by omega) hacc1 hst1 evs_fr evs_f hfr hf_evs
+              exact ⟨evs, hpost_env evs hevs, heq⟩)
+            (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7, hwt_ult, hwt_ule, hlsr3, hlsr3_64, hze, htw32, htag_eq0])
+            (by simp only [wp_norm, arm64_norm, hrun1]) (by simp only [wp_norm, arm64_norm, hsp1]) hs0A
+            (by simp only [wp_norm, arm64_norm, htr1])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by
+              dsimp only [decodeStateErrFramePlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+                Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+              try simp only [wp_norm, arm64_norm]
+              sep_ac_rfl)
+        · -- tag ≥ 1
+          have hloop_step := mergeLoopBin_of_key_ok protoPrefixStep_pqRatchetState_mergeField
+            (m := curSt) (limit := 0) (depth' := 100) hgt hdv hk hwt htag0
+          simp only [Nat.sub_zero] at hloop_step
+          try rw [decodeState_codecWireTypeToProto_eq] at hloop_step
+          have hcbz64 := tag_cbz64_false (by omega : 1 ≤ key.toNat / 8) htag29
+          have hcbz32 := tag_cbz32_false (by omega : 1 ≤ key.toNat / 8) htag29
+          apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 160#64)
+          wp_steps 9
+          refine SepWP.fold (sliceCursorAfter_join (slot := s0.sp - 1056#64) (ptr := x.st.ptr)
+            hcur_le hcur_suf hle1) (by sep_focus) ?_
+          refine SepWP.fold (protoPqRatchetStateCapOkAt_mono (H_inner := H_inner) (A := A.repAlloc)
+            (a := s0.sp - 1040#64) (rem1 := cur.length) (rem2 := rest1.length)
+            (st := curSt) hle1) (by sep_focus) ?_
+          apply SepWP.done
+            (by simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7, hwt_ult, hwt_ule, hlsr3, hlsr3_64, hze, htw32, hcbz64, hcbz32])
+            (by simp only [wp_norm, arm64_norm, hrun1])
+          refine decodeState_outer_dispatch_5353c_cl_placed_ofEnv
+            (PreEnv := PreEnv) (PostEnv := PostEnv)
+            hc x st0 (M.stepEvents evs_dv st) (evs_acc ++ evs_dv) (f + 1) (rem - 1)
+            w0 curSt rest1 (key.toNat / 8) iwt
+            (by omega) htag29 hrest1_le hrest1_suf hlen_bound
+            (by omega)
+            (Nat.le_trans
+              (by unfold optInnerStatePolyCapBound; omega)
+              hpoly)
+            (fun hnone => herr_of_none (by
+              rw [hloop_step]
+              revert hnone
+              rcases (PqRatchetState.mergeField curSt (BitVec.ofNat 32 (key.toNat / 8)) (codecWireTypeToProto iwt) rest1 100).toOption with _ | ⟨_, _⟩ <;>
+                intro hnone <;> exact hnone))
+            hacc1 hst1 hFit1 (by omega) (by omega)
+            s0 _ _ R post hpost hpost_env hs0A
+            (by dsimp only [decodeStatePlacedEntry]
+                simp only [wp_norm, arm64_norm, hx0_0, hx1_key, hk_zero, hand7, hwt_ult, hwt_ule, hlsr3, hlsr3_64, hze, htw32, hcbz64, hcbz32])
+            (by simp only [wp_norm, arm64_norm, hrun1]) (by simp only [wp_norm, arm64_norm, hsp1])
+            (by simp only [wp_norm, arm64_norm, htr1]) (by simp only [wp_norm, arm64_norm, hand7, *])
+            (by simp only [wp_norm, arm64_norm, hlsr3, hlsr3_64, htw32, hze, *])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by simp only [wp_norm, arm64_norm, *]) (by simp only [wp_norm, arm64_norm, *])
+            (by
+              dsimp only [decodeStateLoopCommonPlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+                Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+              try simp only [wp_norm, arm64_norm]
+              try sep_ac_rfl) ?_
+          intro w0' st' rest2 evs_step sf P' hle2 hsuf2 hmf hlinks2 hpoly2 hacc2 hst2 hFit2
+            hpc_sf hrun_sf hsp_sf htr_sf hx19_sf hx20_sf hx21_sf hx22_sf hx23_sf hx24_sf
+            hx25_sf hx26_sf hx27_sf hx28_sf hx29_sf hP'
+          have hlt2 : rest2.length < cur.length := Nat.lt_of_le_of_lt hle2 hlt1
+          have hiter_eq : (evs_acc ++ evs_dv) ++ evs_step = evs_acc ++ (evs_dv ++ evs_step) :=
+            List.append_assoc _ _ _
+          have hst_iter : M.stepEvents (evs_dv ++ evs_step) st =
+              M.stepEvents evs_step (M.stepEvents evs_dv st) :=
+            M.stepEvents_append evs_dv evs_step st
+          exact hnext w0' st' rest2 (evs_dv ++ evs_step) sf P'
+            hlt2 (Nat.le_trans hle2 hrest1_le)
+            (suffix_trans hrest1_le hrest1_suf hle2 hsuf2)
+            (by rw [hloop_step, hmf])
+            hlinks2 hpoly2
+            (by rw [← hiter_eq]; exact hacc2.mono_fuel (by omega))
+            (by rw [← hiter_eq, hst2, ← hst_iter])
+            (by rw [hst_iter]; exact decodeStateLoop_mono (by omega) (Nat.le_refl _) (Nat.le_refl _) hFit2)
+            hpc_sf hrun_sf hsp_sf htr_sf hx19_sf hx20_sf hx21_sf hx22_sf hx23_sf hx24_sf
+            hx25_sf hx26_sf hx27_sf hx28_sf hx29_sf (by rw [hst_iter]; exact hP')
+  · intro s1 evs_dv hdv hevs_dv hpc1 hrun1 hsp1 htr1 hcs1 hx0_1 _
+    have hdv_l : DecodeStateLoopEnv 1 x.st.bytes.length (2 * x.st.bytes.length + 16) evs_dv :=
+      DecodeStateLoopEnv.single (fuel := 0) (DecodeStateIterEnv.of_decodeVarint2 hevs_dv)
+    have hacc1 : DecodeStateLoopEnv (f + 1) x.st.bytes.length
+        (2 * x.st.bytes.length + 16) (evs_acc ++ evs_dv) :=
+      hacc.append hdv_l
+    have hst1 : M.stepEvents (evs_acc ++ evs_dv) st0 = M.stepEvents evs_dv st := by
+      rw [M.stepEvents_append, hst]
+    rcases hcs1 with ⟨hx19_1, hx20_1, hx21_1, hx22_1, hx23_1, hx24_1, hx25_1, hx26_1, hx27_1, hx28_1, hx29_1, hvregs_1⟩
+    simp only [arm64_norm, wp_norm] at hx0_1 hx19_1 hx20_1 hx21_1 hx22_1 hx23_1 hx24_1 hx25_1 hx26_1 hx27_1 hx28_1 hx29_1
+    have hnone_loop : mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = none := by
+      have h := mergeLoopBin_of_decodeVarint_none protoPrefixStep_pqRatchetState_mergeField
+        (m := curSt) (limit := 0) (depth' := 100) hgt hdv
+      simpa using h
+    apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 2392#64)
+    refine SepWP.fold (loopCommon_calleeErr_to_errFrame_placed H_inner A lim
+      (M.stepEvents evs_dv st) x hcur_le hcur_suf cur.length curSt s0 s1)
+      (by dsimp only [decodeStateLoopCommonPlaced]; sep_focus) ?_
+    refine SepWP.fold (scratch_688_fold_48 s0.sp w0)
+      (by dsimp only [decodeStateErrFramePlaced]; sep_focus) ?_
+    wp_steps_sync_pool ((blkPl_325).base + 2392#64)
+    try simp only [State.setMem_setMem]
+    apply SepWP.done
+      (by simp only [wp_norm, arm64_norm, hpc1, hx0_1, *])
+      (by simp only [wp_norm, arm64_norm, hrun1])
+    refine SepWPpIPlaced.of_sepWP_ret_lscl fun hcl => ?_
+    exact decodeState_err_tail_53df4_cl_placed_ofEnv
+      hc.toDecodeStateCalleeContractsClPlaced x st0 (M.stepEvents evs_dv st) curSt 0
+      s0 _ hcl _ R post hpost
+      (fun evs_f hf_evs => by
+        obtain ⟨evs, hevs, heq⟩ :=
+          decodeStateEnv_of_loop_free (by omega) hacc1 hst1 evs_f hf_evs
+        exact ⟨evs, hpost_env evs hevs, heq⟩)
+      (herr_of_none hnone_loop)
+      (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc1, hx0_1, *])
+      (by simp only [wp_norm, arm64_norm, hrun1])
+      (by simp only [wp_norm, arm64_norm, hsp1])
+      hs0A
+      (by simp only [wp_norm, arm64_norm, htr1])
+      (by simp only [wp_norm, arm64_norm, *])
+      (by
+        try dsimp only [decodeStateErrFramePlaced]
+        dsimp only [Reg.x1, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23, Reg.x24, Reg.x25,
+          Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+        try simp only [wp_norm, arm64_norm]
+        sep_ac_rfl)
+
+theorem decodeState_outer_body_53510_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 st : M.σ) (evs_acc : List AllocEvent) (f rem : Nat)
+    (w0 : BitVec 64) (curSt : PqRatchetState)
+    (cur : List (BitVec 8)) (hgt : ¬ cur.length ≤ 0)
+    (hcur_le : cur.length ≤ x.st.bytes.length) (hcur_suf : IsDropSuffix x.st.bytes cur)
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hlinks : (curSt.chain.getD default).links.length + cur.length ≤ 2 * x.st.bytes.length + 4)
+    (hpoly : optInnerStatePolyCapBound (pqRatchetStateV1OrDefault curSt).innerState cur.length ≤
+      2 * x.st.bytes.length + 16)
+    (herr_of_none : mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = none →
+      spqrDecodeState x.st.bytes = .error .stateDecode)
+    (hacc : DecodeStateLoopEnv f x.st.bytes.length (2 * x.st.bytes.length + 16) evs_acc)
+    (hst : M.stepEvents evs_acc st0 = st)
+    (hFit : FitsEnv M lim st
+      (DecodeStateLoopEnv rem x.st.bytes.length (2 * x.st.bytes.length + 16)))
+    (hrem : 16 * cur.length + 32 ≤ rem)
+    (hf : f + 16 * cur.length + 32 ≤ 16 * x.st.bytes.length + 32)
+    (s0 s : State) (P R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlaced H_inner A lim (x, st0) s0 R)
+    (hs0A : s0.spAligned = true)
+    (hpc : s.pc = decodeStatePlacedEntry + 116#64)
+    (hrun : s.status = .Running) (hsp : s.sp = s0.sp - 1392#64) (htr : TraceVRegs s s0)
+    (hx19 : s.readReg64 .x19 = x.outPtr)
+    (hx21 : s.readReg64 .x21 = 0x8000000000000006#64) (hx22 : s.readReg64 .x22 = s0.sp - 1040#64)
+    (hx23 : s.readReg64 .x23 = -1#64) (hx24 : s.readReg64 .x24 = s0.sp - 912#64)
+    (hx25 : s.readReg64 .x25 = s0.sp - 688#64) (hx26 : s.readReg64 .x26 = -2#64)
+    (hx27 : s.readReg64 .x27 = 8#64) (hx28 : s.readReg64 .x28 = 1#64)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64)
+    (hP : P = ((s0.sp - 688#64) ↦₆₄ w0) ∗
+      sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes cur ∗
+      protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) cur.length curSt ∗
+      memRegion (s0.sp - 680#64) 40 ∗ memRegion (s0.sp - 640#64) 304 ∗
+      decodeStateLoopCommonPlaced A lim st x s0 s)
+    (hnext : ∀ (w0' : BitVec 64) (st' : PqRatchetState) (rest2 : List (BitVec 8))
+        (evs_iter : List AllocEvent) (sf : State) (P' : SepProp),
+      rest2.length < cur.length → rest2.length ≤ x.st.bytes.length →
+      IsDropSuffix x.st.bytes rest2 →
+      mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 =
+        mergeLoopBin PqRatchetState.mergeField rest2.length st' rest2 0 100 →
+      (st'.chain.getD default).links.length + rest2.length ≤ 2 * x.st.bytes.length + 4 →
+      optInnerStatePolyCapBound (pqRatchetStateV1OrDefault st').innerState rest2.length ≤
+        2 * x.st.bytes.length + 16 →
+      DecodeStateLoopEnv (f + 16 * (cur.length - rest2.length)) x.st.bytes.length
+        (2 * x.st.bytes.length + 16) (evs_acc ++ evs_iter) →
+      M.stepEvents (evs_acc ++ evs_iter) st0 = M.stepEvents evs_iter st →
+      FitsEnv M lim (M.stepEvents evs_iter st)
+        (DecodeStateLoopEnv (rem - 16 * (cur.length - rest2.length)) x.st.bytes.length
+          (2 * x.st.bytes.length + 16)) →
+      sf.pc = decodeStatePlacedEntry + 1576#64 →
+      sf.status = .Running → sf.sp = s0.sp - 1392#64 → TraceVRegs sf s0 →
+      sf.readReg64 .x19 = x.outPtr → sf.readReg64 .x20 = BitVec.ofNat 64 rest2.length →
+      sf.readReg64 .x21 = 0x8000000000000006#64 → sf.readReg64 .x22 = s0.sp - 1040#64 →
+      sf.readReg64 .x23 = -1#64 → sf.readReg64 .x24 = s0.sp - 912#64 →
+      sf.readReg64 .x25 = s0.sp - 688#64 → sf.readReg64 .x26 = -2#64 →
+      sf.readReg64 .x27 = 8#64 → sf.readReg64 .x28 = 1#64 → sf.readReg64 .x29 = s0.sp - 96#64 →
+      P' = ((s0.sp - 688#64) ↦₆₄ w0') ∗
+        sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes rest2 ∗
+        protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) rest2.length st' ∗
+        memRegion (s0.sp - 680#64) 40 ∗ memRegion (s0.sp - 640#64) 304 ∗
+        decodeStateLoopCommonPlaced A lim (M.stepEvents evs_iter st) x s0 sf →
+      SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) sf P' post
+        (decodeStatePanicPostPlaced H_inner A lim (x, st0) s0 R)) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+      (decodeStatePanicPostPlaced H_inner A lim (x, st0) s0 R) :=
+  decodeState_outer_body_53510_cl_placed_ofEnv
+    (PreEnv := DecodeStateEnv) (PostEnv := DecodeStateEnv)
+    hc x st0 st evs_acc f rem w0 curSt cur hgt hcur_le hcur_suf hlen_bound hlinks hpoly
+    herr_of_none hacc hst hFit hrem hf s0 s P R post hpost (fun _ h => h) hs0A
+    hpc hrun hsp htr hx19 hx21 hx22 hx23 hx24 hx25 hx26 hx27 hx28 hx29 hP hnext
+
+/-! ## 2. Outer Loop (`+1576`, Code-Loaded) by Induction on Remaining Slice Length -/
+
+private theorem len_cbz64_false {n : Nat} (h1 : 1 ≤ n) (hlt : n < 2 ^ 32) :
+    (BitVec.ofNat 64 n == 0#64) = false := by
+  apply beq_eq_false_iff_ne.mpr
+  intro h
+  have h2 := congrArg BitVec.toNat h
+  simp only [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega : n < 2 ^ 64)] at h2
+  omega
+
+/-- Envelope-parameterized code-loaded outer loop latch at `+1576`:
+- If `cur = []` (`x20 = 0`), branches to `+1676` (`decodeState_ok_exit_53b28_cl_placed_ofEnv`).
+- If `cur ≠ []` (`x20 ≠ 0`), branches to `+116` (`decodeState_outer_body_53510_cl_placed_ofEnv`)
+  and recurses. -/
+theorem decodeState_outer_loop_53ac4_cl_placed_ofEnv [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {PreEnv PostEnv : DecodeStateGhost → List AllocEvent → Prop}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (s0 : State) (R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+    (hpost_env : ∀ evs, DecodeStateEnv x evs → PostEnv x evs)
+    (hs0A : s0.spAligned = true) :
+    ∀ (fuel : Nat) (st : M.σ) (evs_acc : List AllocEvent) (f rem : Nat)
+      (w0 : BitVec 64) (curSt : PqRatchetState) (cur : List (BitVec 8))
+      (s : State) (P : SepProp),
+      cur.length ≤ fuel →
+      cur.length ≤ x.st.bytes.length →
+      IsDropSuffix x.st.bytes cur →
+      (curSt.chain.getD default).links.length + cur.length ≤ 2 * x.st.bytes.length + 4 →
+      optInnerStatePolyCapBound (pqRatchetStateV1OrDefault curSt).innerState cur.length ≤
+        2 * x.st.bytes.length + 16 →
+      DecodeStateLoopEnv f x.st.bytes.length (2 * x.st.bytes.length + 16) evs_acc →
+      M.stepEvents evs_acc st0 = st →
+      FitsEnv M lim st
+        (DecodeStateLoopEnv rem x.st.bytes.length (2 * x.st.bytes.length + 16)) →
+      16 * cur.length + 32 ≤ rem →
+      f + 16 * cur.length + 32 ≤ 16 * x.st.bytes.length + 32 →
+      (mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = none →
+        spqrDecodeState x.st.bytes = .error .stateDecode) →
+      (∀ stFinal, mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = some stFinal →
+        spqrDecodeState x.st.bytes = .ok stFinal) →
+      s.pc = decodeStatePlacedEntry + 1576#64 →
+      s.status = .Running → s.sp = s0.sp - 1392#64 → TraceVRegs s s0 →
+      s.readReg64 .x19 = x.outPtr →
+      s.readReg64 .x20 = BitVec.ofNat 64 cur.length →
+      s.readReg64 .x21 = 0x8000000000000006#64 →
+      s.readReg64 .x22 = s0.sp - 1040#64 →
+      s.readReg64 .x23 = -1#64 →
+      s.readReg64 .x24 = s0.sp - 912#64 →
+      s.readReg64 .x25 = s0.sp - 688#64 →
+      s.readReg64 .x26 = -2#64 →
+      s.readReg64 .x27 = 8#64 →
+      s.readReg64 .x28 = 1#64 →
+      s.readReg64 .x29 = s0.sp - 96#64 →
+      P = ((s0.sp - 688#64) ↦₆₄ w0) ∗
+        sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes cur ∗
+        protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) cur.length curSt ∗
+        memRegion (s0.sp - 680#64) 40 ∗
+        memRegion (s0.sp - 640#64) 304 ∗
+        decodeStateLoopCommonPlaced A lim st x s0 s →
+      SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+        (decodeStatePanicPostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+  | 0, st, evs_acc, f, _, w0, curSt, cur, s, P,
+    hfuel, _, _, _, _, hacc, hst, _, _, hf, _, hok_of_some,
+    hpc, hrun, hsp, htr, hx19, hx20, _, hx22, _, _, _, _, _, _, _, hP => by
+    have hcur_nil : cur = [] := List.eq_nil_of_length_eq_zero (by omega)
+    subst hcur_nil
+    have hloop_eq : mergeLoopBin PqRatchetState.mergeField ([] : List (BitVec 8)).length curSt [] 0 100 = some curSt :=
+      mergeLoopBin_eq_limit PqRatchetState.mergeField 0 curSt [] 0 100 rfl
+    have hok : spqrDecodeState x.st.bytes = .ok curSt := hok_of_some curSt hloop_eq
+    obtain ⟨evs_fin, hevs_fin, hst_fin⟩ :=
+      decodeStateEnv_of_loop (by simp at hf; omega) hacc hst
+    subst hP
+    dsimp only [decodeStatePlacedProg, decodeStatePlacedEntry, decodeStateLoopCommonPlaced,
+      List.length_nil] at hpc hx20 ⊢
+    apply SepWPpIPlaced.of_sepWPp
+    apply SepWPp.of_sepWP_ret
+    wp_steps_sync_pool ((blkPl_325).base + 1676#64)
+    try simp only [State.setMem_setMem]
+    exact decodeState_ok_exit_53b28_cl_placed_ofEnv hc.toDecodeStateCalleeContractsClPlaced
+      x st0 st w0 curSt hok s0 _ _ R post hpost
+      ⟨evs_fin, hpost_env evs_fin hevs_fin, hst_fin⟩ hs0A
+      (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc, hx20])
+      (by simp only [wp_norm, arm64_norm, hrun]) (by simp only [wp_norm, arm64_norm, hsp])
+      (by simp only [wp_norm, arm64_norm, htr]) (by simp only [wp_norm, arm64_norm, hx19])
+      (by simp only [wp_norm, arm64_norm, hx22])
+      (by
+        dsimp only [decodeStateLoopCommonPlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+          Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+        try simp only [wp_norm, arm64_norm]
+        sep_ac_rfl)
+  | fuel + 1, st, evs_acc, f, rem, w0, curSt, cur, s, P,
+    hfuel, hcur_le, hcur_suf, hlinks, hpoly, hacc, hst, hFit, hrem, hf,
+    herr_of_none, hok_of_some,
+    hpc, hrun, hsp, htr, hx19, hx20, hx21, hx22, hx23, hx24, hx25, hx26, hx27, hx28, hx29, hP => by
+    by_cases hgt : ¬ cur.length ≤ 0
+    · -- cur.length > 0
+      have hcbz : (BitVec.ofNat 64 cur.length == 0#64) = false :=
+        len_cbz64_false (by omega) (by omega)
+      subst hP
+      dsimp only [decodeStatePlacedProg, decodeStatePlacedEntry, decodeStateLoopCommonPlaced] at hpc ⊢
+      apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 116#64)
+      wp_steps_sync_pool ((blkPl_325).base + 116#64)
+      try simp only [State.setMem_setMem]
+      apply SepWP.done
+        (by simp only [wp_norm, arm64_norm, hpc, hx20, hcbz])
+        (by simp only [wp_norm, arm64_norm, hrun])
+      refine decodeState_outer_body_53510_cl_placed_ofEnv
+        (PreEnv := PreEnv) (PostEnv := PostEnv)
+        hc x st0 st evs_acc f rem w0 curSt cur hgt hcur_le hcur_suf hlen_bound
+        hlinks hpoly herr_of_none hacc hst hFit hrem hf
+        s0 _ _ R post hpost hpost_env hs0A
+        (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc, hx20, hcbz])
+        (by simp only [wp_norm, arm64_norm, hrun]) (by simp only [wp_norm, arm64_norm, hsp])
+        (by simp only [wp_norm, arm64_norm, htr]) (by simp only [wp_norm, arm64_norm, hx19])
+        (by simp only [wp_norm, arm64_norm, hx21]) (by simp only [wp_norm, arm64_norm, hx22])
+        (by simp only [wp_norm, arm64_norm, hx23]) (by simp only [wp_norm, arm64_norm, hx24])
+        (by simp only [wp_norm, arm64_norm, hx25]) (by simp only [wp_norm, arm64_norm, hx26])
+        (by simp only [wp_norm, arm64_norm, hx27]) (by simp only [wp_norm, arm64_norm, hx28])
+        (by simp only [wp_norm, arm64_norm, hx29])
+        (by
+          dsimp only [decodeStateLoopCommonPlaced, Reg.x19, Reg.x20, Reg.x21, Reg.x22, Reg.x23,
+            Reg.x24, Reg.x25, Reg.x26, Reg.x27, Reg.x28, Reg.x29, Reg.x30]
+          try simp only [wp_norm, arm64_norm]
+          try sep_ac_rfl) ?_
+      intro w0' st' rest2 evs_iter sf P' hlt2 hle2 hsuf2 hloop_eq hlinks2 hpoly2 hacc2 hst2 hFit2
+      exact decodeState_outer_loop_53ac4_cl_placed_ofEnv hc x st0 hlen_bound s0 R post hpost hpost_env hs0A
+        fuel (M.stepEvents evs_iter st) (evs_acc ++ evs_iter)
+        (f + 16 * (cur.length - rest2.length)) (rem - 16 * (cur.length - rest2.length))
+        w0' st' rest2 sf P' (by omega) hle2 hsuf2 hlinks2 hpoly2 hacc2 hst2 hFit2
+        (by omega) (by omega)
+        (fun hnone => herr_of_none (by rw [hloop_eq, hnone]))
+        (fun stFinal hsome => hok_of_some stFinal (by rw [hloop_eq, hsome]))
+    · -- cur.length = 0
+      exact decodeState_outer_loop_53ac4_cl_placed_ofEnv hc x st0 hlen_bound s0 R post hpost hpost_env hs0A
+        0 st evs_acc f rem w0 curSt cur s P (by omega) hcur_le hcur_suf hlinks hpoly
+        hacc hst hFit hrem hf herr_of_none hok_of_some
+        hpc hrun hsp htr hx19 hx20 hx21 hx22 hx23 hx24 hx25 hx26 hx27 hx28 hx29 hP
+
+theorem decodeState_outer_loop_53ac4_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (s0 : State) (R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlaced H_inner A lim (x, st0) s0 R)
+    (hs0A : s0.spAligned = true) :
+    ∀ (fuel : Nat) (st : M.σ) (evs_acc : List AllocEvent) (f rem : Nat)
+      (w0 : BitVec 64) (curSt : PqRatchetState) (cur : List (BitVec 8))
+      (s : State) (P : SepProp),
+      cur.length ≤ fuel →
+      cur.length ≤ x.st.bytes.length →
+      IsDropSuffix x.st.bytes cur →
+      (curSt.chain.getD default).links.length + cur.length ≤ 2 * x.st.bytes.length + 4 →
+      optInnerStatePolyCapBound (pqRatchetStateV1OrDefault curSt).innerState cur.length ≤
+        2 * x.st.bytes.length + 16 →
+      DecodeStateLoopEnv f x.st.bytes.length (2 * x.st.bytes.length + 16) evs_acc →
+      M.stepEvents evs_acc st0 = st →
+      FitsEnv M lim st
+        (DecodeStateLoopEnv rem x.st.bytes.length (2 * x.st.bytes.length + 16)) →
+      16 * cur.length + 32 ≤ rem →
+      f + 16 * cur.length + 32 ≤ 16 * x.st.bytes.length + 32 →
+      (mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = none →
+        spqrDecodeState x.st.bytes = .error .stateDecode) →
+      (∀ stFinal, mergeLoopBin PqRatchetState.mergeField cur.length curSt cur 0 100 = some stFinal →
+        spqrDecodeState x.st.bytes = .ok stFinal) →
+      s.pc = decodeStatePlacedEntry + 1576#64 →
+      s.status = .Running → s.sp = s0.sp - 1392#64 → TraceVRegs s s0 →
+      s.readReg64 .x19 = x.outPtr →
+      s.readReg64 .x20 = BitVec.ofNat 64 cur.length →
+      s.readReg64 .x21 = 0x8000000000000006#64 →
+      s.readReg64 .x22 = s0.sp - 1040#64 →
+      s.readReg64 .x23 = -1#64 →
+      s.readReg64 .x24 = s0.sp - 912#64 →
+      s.readReg64 .x25 = s0.sp - 688#64 →
+      s.readReg64 .x26 = -2#64 →
+      s.readReg64 .x27 = 8#64 →
+      s.readReg64 .x28 = 1#64 →
+      s.readReg64 .x29 = s0.sp - 96#64 →
+      P = ((s0.sp - 688#64) ↦₆₄ w0) ∗
+        sliceCursorAfter (s0.sp - 1056#64) x.st.ptr x.st.bytes cur ∗
+        protoPqRatchetStateCapOkAt H_inner A.repAlloc (s0.sp - 1040#64) cur.length curSt ∗
+        memRegion (s0.sp - 680#64) 40 ∗
+        memRegion (s0.sp - 640#64) 304 ∗
+        decodeStateLoopCommonPlaced A lim st x s0 s →
+      SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+        (decodeStatePanicPostPlaced H_inner A lim (x, st0) s0 R) :=
+  decodeState_outer_loop_53ac4_cl_placed_ofEnv
+    (PreEnv := DecodeStateEnv) (PostEnv := DecodeStateEnv)
+    hc x st0 hlen_bound s0 R post hpost (fun _ h => h) hs0A
+
+/-! ## 3. Prologue (`+0..+112`) and Top-Level Code-Loaded Theorems -/
+
+private def localVecU8Heap (A : RustAlloc) (cap ptr : BitVec 64) (bs : List (BitVec 8)) : SepProp :=
+  ⌜bs.length ≤ cap.toNat ∧ cap.toNat < 2 ^ 63 ∧ ptr ≠ 0⌝ ∗
+    (if cap = 0 then emp
+     else A.live ptr cap.toNat 1 ∗ (ptr ↦ₛ bs) ∗
+       memRegion (ptr + BitVec.ofNat 64 bs.length) (cap.toNat - bs.length))
+
+private theorem vecArg_expose_len (A : RustAlloc) (st : VecArg) :
+    st.at A ⊢
+      (st.v ↦₆₄ st.cap) ∗ ((st.v + 8#64) ↦₆₄ st.ptr) ∗
+      ((st.v + 16#64) ↦₆₄ BitVec.ofNat 64 st.bytes.length) ∗
+      localVecU8Heap A st.cap st.ptr st.bytes := by
+  unfold VecArg.at vecU8At vecHeader localVecU8Heap
+  exact Entails.of_eq (by sep_ac_rfl)
+
+private theorem vecArg_fold_len (A : RustAlloc) (st : VecArg) :
+    (st.v ↦₆₄ st.cap) ∗ ((st.v + 8#64) ↦₆₄ st.ptr) ∗
+      ((st.v + 16#64) ↦₆₄ BitVec.ofNat 64 st.bytes.length) ∗
+      localVecU8Heap A st.cap st.ptr st.bytes ⊢
+      st.at A := by
+  unfold VecArg.at vecU8At vecHeader localVecU8Heap
+  exact Entails.of_eq (by sep_ac_rfl)
+
+private theorem nonempty_prologue_frame_assemble (H_inner : V1InnerHeapPred) (A : RustAlloc)
+    (sp : BitVec 64) (st : VecArg) :
+    ((sp - 1056#64) ↦₆₄ st.ptr) ∗
+      ((sp - 1048#64) ↦₆₄ BitVec.ofNat 64 st.bytes.length) ∗
+      (st.ptr ↦ₛ st.bytes) ∗
+      ((sp - 1040#64) ↦₆₄ (-1#64)) ∗ memRegion (sp - 1032#64) 40 ∗
+      ((sp - 992#64) ↦₆₄ (-1#64)) ∗ memRegion (sp - 984#64) 72 ∗
+      ((sp - 912#64) ↦₆₄ (-3#64)) ∗ memRegion (sp - 904#64) 216 ⊢
+      sliceCursorAfter (sp - 1056#64) st.ptr st.bytes st.bytes ∗
+      protoPqRatchetStateCapOkAt H_inner A (sp - 1040#64) st.bytes.length default := by
+  rw [pqRatchetState_default_eq]
+  unfold sliceCursorAfter protoPqRatchetStateCapOkAt
+    optVersionNegotiationPBCapOkAt optChainPBCapOkAt optProtoPqRatchetInnerCapOkAt
+    noneCap none3Cap
+  dsimp only
+  have hsub0 : st.bytes.length - st.bytes.length = 0 := Nat.sub_self _
+  have hptr0 : st.ptr + BitVec.ofNat 64 0 = st.ptr := by simp
+  have ha1048 : (sp - 1056#64) + 8#64 = sp - 1048#64 := by bv_omega
+  have ha1032 : (sp - 1040#64) + 8#64 = sp - 1032#64 := by bv_omega
+  have ha992 : (sp - 1040#64) + 48#64 = sp - 992#64 := by bv_omega
+  have ha984 : (sp - 992#64) + 8#64 = sp - 984#64 := by bv_omega
+  have ha912 : (sp - 1040#64) + 128#64 = sp - 912#64 := by bv_omega
+  have ha904 : (sp - 912#64) + 8#64 = sp - 904#64 := by bv_omega
+  rw [hsub0, hptr0, ha1048, ha1032, ha992, ha984, ha912, ha904]
+  exact Entails.of_eq (by sep_ac_rfl)
+
+private theorem decodeState_nonempty_frame_split_s0 (sp0 : BitVec 64) :
+    ((sp0 - 1392#64) ↦₆₄ 0#64) ∗ memRegion (sp0 - 1384#64) 1288 ⊢
+      memRegion (sp0 - 1392#64) 336 ∗
+      memRegion (sp0 - 1032#64) 40 ∗
+      memRegion (sp0 - 984#64) 72 ∗
+      memRegion (sp0 - 904#64) 216 ∗
+      memRegion (sp0 - 688#64) 352 ∗
+      memRegion (sp0 - 328#64) 224 ∗
+      memRegion (sp0 - 104#64) 8 ∗
+      (∃∗ bRef : BitVec 64, ∃∗ in0 : BitVec 64, ∃∗ ch0 : BitVec 64,
+       ∃∗ vn0 : BitVec 64, ∃∗ cLen : BitVec 64, ∃∗ cPtr : BitVec 64,
+        ((sp0 - 1056#64) ↦₆₄ cPtr) ∗ ((sp0 - 1048#64) ↦₆₄ cLen) ∗
+        ((sp0 - 1040#64) ↦₆₄ vn0) ∗ ((sp0 - 992#64) ↦₆₄ ch0) ∗
+        ((sp0 - 912#64) ↦₆₄ in0) ∗ ((sp0 - 336#64) ↦₆₄ bRef)) := by
+  have hsplit := decodeState_nonempty_frame_split (sp0 - 1392#64) 0#64
+  have h1 : sp0 - 1392#64 + 8#64 = sp0 - 1384#64 := bv_sub_add_lit sp0 1392 8
+  have h2 : sp0 - 1392#64 + 360#64 = sp0 - 1032#64 := bv_sub_add_lit sp0 1392 360
+  have h3 : sp0 - 1392#64 + 408#64 = sp0 - 984#64 := bv_sub_add_lit sp0 1392 408
+  have h4 : sp0 - 1392#64 + 488#64 = sp0 - 904#64 := bv_sub_add_lit sp0 1392 488
+  have h5 : sp0 - 1392#64 + 704#64 = sp0 - 688#64 := bv_sub_add_lit sp0 1392 704
+  have h6 : sp0 - 1392#64 + 1064#64 = sp0 - 328#64 := bv_sub_add_lit sp0 1392 1064
+  have h7 : sp0 - 1392#64 + 1288#64 = sp0 - 104#64 := bv_sub_add_lit sp0 1392 1288
+  have h8 : sp0 - 1392#64 + 336#64 = sp0 - 1056#64 := bv_sub_add_lit sp0 1392 336
+  have h9 : sp0 - 1392#64 + 344#64 = sp0 - 1048#64 := bv_sub_add_lit sp0 1392 344
+  have h10 : sp0 - 1392#64 + 352#64 = sp0 - 1040#64 := bv_sub_add_lit sp0 1392 352
+  have h11 : sp0 - 1392#64 + 400#64 = sp0 - 992#64 := bv_sub_add_lit sp0 1392 400
+  have h12 : sp0 - 1392#64 + 480#64 = sp0 - 912#64 := bv_sub_add_lit sp0 1392 480
+  have h13 : sp0 - 1392#64 + 1056#64 = sp0 - 336#64 := bv_sub_add_lit sp0 1392 1056
+  rw [h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13] at hsplit
+  exact hsplit
+
+/-- Envelope-parameterized code-loaded stack frame initialization (`+52..+116`) on the non-empty
+input path. -/
+theorem decodeState_prologue_init_534d0_cl_placed_ofEnv [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {PreEnv PostEnv : DecodeStateGhost → List AllocEvent → Prop}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (hbs_nil : x.st.bytes ≠ [])
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hFit : FitsEnv M lim st0 (DecodeStateEnv x))
+    (s0 s : State) (P R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+    (hpost_env : ∀ evs, DecodeStateEnv x evs → PostEnv x evs)
+    (hs0A : s0.spAligned = true)
+    (hpc : s.pc = decodeStatePlacedEntry + 52#64)
+    (hrun : s.status = .Running)
+    (hsp : s.sp = s0.sp - 1392#64)
+    (htr : TraceVRegs s s0)
+    (hx8 : s.readReg64 .x8 = x.st.ptr)
+    (hx9 : s.readReg64 .x9 = BitVec.ofNat 64 x.st.bytes.length)
+    (hx19 : s.readReg64 .x19 = x.outPtr)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64)
+    (hP : P =
+      (x.st.ptr ↦ₛ x.st.bytes) ∗
+      vecArgRestAt A.repAlloc x.st ∗
+      memRegion (s0.sp - 1384#64) 1288 ∗
+      ((s0.sp - 1392#64) ↦₆₄ 0#64) ∗
+      v1StateJumpTablesPlacedAt ∗
+      memRegion x.outPtr 352 ∗
+      A.pool lim st0 s ∗
+      stackAt (s0.sp - 1392#64) v1StateMergeStack ∗
+      decodeStateSavedAt s0.sp (s0.readReg64 .x29) (s0.readReg64 .x30)
+        (s0.readReg64 .x28) (s0.readReg64 .x27) (s0.readReg64 .x26) (s0.readReg64 .x25)
+        (s0.readReg64 .x24) (s0.readReg64 .x23) (s0.readReg64 .x22) (s0.readReg64 .x21)
+        (s0.readReg64 .x20) (s0.readReg64 .x19)) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+      (decodeStatePanicPostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R) := by
+  have hspA : s.spAligned = true := by
+    rw [State.spAligned, hsp]; exact sp_sub_1392_aligned s0 hs0A
+  have hgt0 : ¬ x.st.bytes.length ≤ 0 := by
+    have := List.length_pos_of_ne_nil hbs_nil; omega
+  have hlinks0 :
+      (((default : PqRatchetState).chain.getD default).links.length + x.st.bytes.length) ≤
+        2 * x.st.bytes.length + 4 := by
+    rw [pqRatchetState_default_eq]
+    change 0 + x.st.bytes.length ≤ 2 * x.st.bytes.length + 4
+    omega
+  have hpoly0 :
+      optInnerStatePolyCapBound (pqRatchetStateV1OrDefault (default : PqRatchetState)).innerState
+        x.st.bytes.length ≤ 2 * x.st.bytes.length + 16 := by
+    rw [pqRatchetState_default_eq]
+    unfold pqRatchetStateV1OrDefault optInnerStatePolyCapBound
+    change optInnerStatePolyCapMax (default : V1State).innerState + x.st.bytes.length ≤
+      2 * x.st.bytes.length + 16
+    have hnone : (default : V1State).innerState = none := rfl
+    rw [hnone]
+    dsimp only [optInnerStatePolyCapMax]
+    omega
+  subst hP
+  dsimp only [decodeStatePlacedProg, decodeStatePlacedEntry] at hpc ⊢
+  apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 116#64)
+  refine SepWP.fold (decodeState_nonempty_frame_split_s0 s0.sp) (by sep_focus) ?_
+  wp_pull_exists
+  wp_steps_sync_pool ((blkPl_325).base + 116#64)
+  try simp only [State.setMem_setMem]
+  refine SepWP.fold (nonempty_prologue_frame_assemble H_inner A.repAlloc s0.sp x.st)
+    (by sep_focus) ?_
+  refine SepWP.fold (scratch_688_split_48 s0.sp) (by sep_focus) ?_
+  wp_pull_exists
+  rename_i w0_scr
+  apply SepWP.done (by simp only [wp_norm, arm64_norm, hpc])
+    (by simp only [wp_norm, arm64_norm, hrun])
+  refine decodeState_outer_body_53510_cl_placed_ofEnv
+    (PreEnv := PreEnv) (PostEnv := PostEnv)
+    hc x st0 st0 [] 0 (16 * x.st.bytes.length + 32) w0_scr default x.st.bytes hgt0
+    (Nat.le_refl _) (by unfold IsDropSuffix; simp) hlen_bound
+    hlinks0 hpoly0
+    (spqrDecodeState_eq_of_mergeLoopBin_top_err hbs_nil)
+    .nil rfl hFit (Nat.le_refl _) (by omega)
+    s0 _ _ R post hpost hpost_env hs0A
+    (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc])
+    (by simp only [wp_norm, arm64_norm, hrun]) (by simp only [wp_norm, arm64_norm, hsp])
+    (by simp only [wp_norm, arm64_norm, htr]) (by simp only [wp_norm, arm64_norm, hx19])
+    (by simp only [wp_norm, arm64_norm]) (by simp only [wp_norm, arm64_norm, hsp])
+    (by simp only [wp_norm, arm64_norm]; rfl) (by simp only [wp_norm, arm64_norm, hsp])
+    (by simp only [wp_norm, arm64_norm, hsp]) (by simp only [wp_norm, arm64_norm]; rfl)
+    (by simp only [wp_norm, arm64_norm]) (by simp only [wp_norm, arm64_norm])
+    (by simp only [wp_norm, arm64_norm, hx29])
+    (by
+      unfold decodeStateLoopCommonPlaced
+      simp only [wp_norm, arm64_norm, hsp, hx29]
+      sep_ac_rfl) ?_
+  intro w0' st' rest2 evs_iter sf P' _ hle2 hsuf2 hloop_eq hlinks2 hpoly2 hacc2 hst2 hFit2
+  exact decodeState_outer_loop_53ac4_cl_placed_ofEnv hc x st0 hlen_bound s0 R post hpost hpost_env hs0A
+    rest2.length (M.stepEvents evs_iter st0) ([] ++ evs_iter)
+    (0 + 16 * (x.st.bytes.length - rest2.length))
+    ((16 * x.st.bytes.length + 32) - 16 * (x.st.bytes.length - rest2.length))
+    w0' st' rest2 sf P' (Nat.le_refl _) hle2 hsuf2 hlinks2 hpoly2 hacc2 hst2 hFit2
+    (by omega) (by omega)
+    (fun hnone => spqrDecodeState_eq_of_mergeLoopBin_top_err hbs_nil (by rw [hloop_eq, hnone]))
+    (fun stFinal hsome => spqrDecodeState_eq_of_mergeLoopBin_top_ok hbs_nil (by rw [hloop_eq, hsome]))
+
+theorem decodeState_prologue_init_534d0_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (hbs_nil : x.st.bytes ≠ [])
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hFit : FitsEnv M lim st0 (DecodeStateEnv x))
+    (s0 s : State) (P R : SepProp) (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlaced H_inner A lim (x, st0) s0 R)
+    (hs0A : s0.spAligned = true)
+    (hpc : s.pc = decodeStatePlacedEntry + 52#64)
+    (hrun : s.status = .Running)
+    (hsp : s.sp = s0.sp - 1392#64)
+    (htr : TraceVRegs s s0)
+    (hx8 : s.readReg64 .x8 = x.st.ptr)
+    (hx9 : s.readReg64 .x9 = BitVec.ofNat 64 x.st.bytes.length)
+    (hx19 : s.readReg64 .x19 = x.outPtr)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64)
+    (hP : P =
+      (x.st.ptr ↦ₛ x.st.bytes) ∗
+      vecArgRestAt A.repAlloc x.st ∗
+      memRegion (s0.sp - 1384#64) 1288 ∗
+      ((s0.sp - 1392#64) ↦₆₄ 0#64) ∗
+      v1StateJumpTablesPlacedAt ∗
+      memRegion x.outPtr 352 ∗
+      A.pool lim st0 s ∗
+      stackAt (s0.sp - 1392#64) v1StateMergeStack ∗
+      decodeStateSavedAt s0.sp (s0.readReg64 .x29) (s0.readReg64 .x30)
+        (s0.readReg64 .x28) (s0.readReg64 .x27) (s0.readReg64 .x26) (s0.readReg64 .x25)
+        (s0.readReg64 .x24) (s0.readReg64 .x23) (s0.readReg64 .x22) (s0.readReg64 .x21)
+        (s0.readReg64 .x20) (s0.readReg64 .x19)) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s P post
+      (decodeStatePanicPostPlaced H_inner A lim (x, st0) s0 R) :=
+  decodeState_prologue_init_534d0_cl_placed_ofEnv
+    (PreEnv := DecodeStateEnv) (PostEnv := DecodeStateEnv)
+    hc x st0 hbs_nil hlen_bound hFit s0 s P R post hpost (fun _ h => h) hs0A
+    hpc hrun hsp htr hx8 hx9 hx19 hx29 hP
+
+/-- Envelope-parameterized code-loaded full execution of `spqr::decode_state` from entry `+0`. -/
+theorem decodeState_entry_5349c_cl_placed_ofEnv [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {PreEnv PostEnv : DecodeStateGhost → List AllocEvent → Prop}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (s0 : State) (P R : SepProp)
+    (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+    (hpost_env : ∀ evs, DecodeStateEnv x evs → PostEnv x evs)
+    (hs0A : s0.spAligned = true)
+    (hpc : s0.pc = decodeStatePlacedEntry)
+    (hrun : s0.status = .Running)
+    (hx8 : s0.readReg64 .x8 = x.outPtr)
+    (hx0 : s0.readReg64 .x0 = x.st.v)
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hFit : FitsEnv M lim st0 (DecodeStateEnv x))
+    (hP : P =
+      v1StateJumpTablesPlacedAt ∗
+      x.st.at A.repAlloc ∗
+      memRegion x.outPtr 352 ∗
+      A.pool lim st0 s0 ∗
+      stackAt s0.sp decodeStateStackX) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s0 P post
+      (decodeStatePanicPostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R) := by
+  subst hP
+  rw [stackAt_decodeState_entry_split s0.sp]
+  dsimp only [decodeStatePlacedProg, decodeStatePlacedEntry] at hpc ⊢
+  by_cases hbs_nil : x.st.bytes = []
+  · -- empty input
+    have hlen0 : BitVec.ofNat 64 x.st.bytes.length = 0#64 := by rw [hbs_nil]; rfl
+    apply SepWPpIPlaced.of_sepWPp
+    apply SepWPp.of_sepWP_ret
+    wp_pull_exists
+    unfold decodeStateSavedAt
+    refine SepWP.fold (vecArg_expose_len A.repAlloc x.st) (by sep_focus) ?_
+    wp_steps_sync_pool ((blkPl_325).base + 1604#64)
+    try simp only [State.setMem_setMem]
+    refine SepWP.fold (vecArg_fold_len A.repAlloc x.st) (by sep_focus) ?_
+    exact decodeState_empty_53ae0_placed_ofEnv x st0 st0 0#64 hbs_nil s0 _ _ R post hpost
+      ⟨[], hpost_env [] DecodeStateLoopEnv.nil, rfl⟩
+      (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc, hx0, hlen0])
+      (by simp only [wp_norm, arm64_norm, hrun])
+      (by simp only [wp_norm, arm64_norm])
+      hs0A
+      (by simp only [wp_norm, arm64_norm])
+      (by simp only [wp_norm, arm64_norm, hx8])
+      (by unfold decodeStateSavedAt; simp only [wp_norm, arm64_norm]; sep_ac_rfl)
+  · -- non-empty input
+    have hgt0 : ¬ x.st.bytes.length ≤ 0 := by
+      have := List.length_pos_of_ne_nil hbs_nil; omega
+    have hcbz : (BitVec.ofNat 64 x.st.bytes.length == 0#64) = false :=
+      len_cbz64_false (by omega) (by omega)
+    apply SepWPpIPlaced.of_sepWP (mid := (blkPl_325).base + 52#64)
+    wp_pull_exists
+    unfold decodeStateSavedAt
+    refine SepWP.fold (vecArg_split_bytes A.repAlloc x.st hbs_nil) (by sep_focus) ?_
+    unfold vecArgRestAt
+    wp_focus_pure; intro hpure_st
+    wp_steps_sync_pool ((blkPl_325).base + 52#64)
+    try simp only [State.setMem_setMem]
+    have hfold_rest :
+        (x.st.v ↦₆₄ x.st.cap) ∗ ((x.st.v + 8#64) ↦₆₄ x.st.ptr) ∗
+          ((x.st.v + 16#64) ↦₆₄ BitVec.ofNat 64 x.st.bytes.length) ∗
+          A.repAlloc.live x.st.ptr x.st.cap.toNat 1 ∗
+          memRegion (x.st.ptr + BitVec.ofNat 64 x.st.bytes.length) (x.st.cap.toNat - x.st.bytes.length) ⊢
+          vecArgRestAt A.repAlloc x.st := by
+      unfold vecArgRestAt
+      refine Entails.trans (Entails.of_eq ?_)
+        (sepConj_mono_right (sepConj_mono_right (sepConj_mono_right (Entails.pure_right hpure_st (Entails.refl _)))))
+      sep_ac_rfl
+    refine SepWP.fold hfold_rest (by sep_focus) ?_
+    apply SepWP.done
+      (by simp only [wp_norm, arm64_norm, hpc, hx0, hcbz])
+      (by simp only [wp_norm, arm64_norm, hrun])
+    exact decodeState_prologue_init_534d0_cl_placed_ofEnv
+      hc x st0 hbs_nil hlen_bound hFit s0 _ _ R post hpost hpost_env hs0A
+      (by dsimp only [decodeStatePlacedEntry]; simp only [wp_norm, arm64_norm, hpc, hx0, hcbz])
+      (by simp only [wp_norm, arm64_norm, hrun])
+      (by simp only [wp_norm, arm64_norm])
+      (by simp only [wp_norm, arm64_norm])
+      (by simp only [wp_norm, arm64_norm, hx0])
+      (by simp only [wp_norm, arm64_norm, hx0])
+      (by simp only [wp_norm, arm64_norm, hx8])
+      (by simp only [wp_norm, arm64_norm])
+      (by unfold decodeStateSavedAt; simp only [wp_norm, arm64_norm]; sep_ac_rfl)
+
+theorem decodeState_entry_5349c_cl_placed [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext)
+    (x : DecodeStateGhost) (st0 : M.σ) (s0 : State) (P R : SepProp)
+    (post : State → SepProp → Prop)
+    (hpost : post = decodeStatePostPlaced H_inner A lim (x, st0) s0 R)
+    (hs0A : s0.spAligned = true)
+    (hpc : s0.pc = decodeStatePlacedEntry)
+    (hrun : s0.status = .Running)
+    (hx8 : s0.readReg64 .x8 = x.outPtr)
+    (hx0 : s0.readReg64 .x0 = x.st.v)
+    (hlen_bound : x.st.bytes.length < 2 ^ 32)
+    (hFit : FitsEnv M lim st0 (DecodeStateEnv x))
+    (hP : P =
+      v1StateJumpTablesPlacedAt ∗
+      x.st.at A.repAlloc ∗
+      memRegion x.outPtr 352 ∗
+      A.pool lim st0 s0 ∗
+      stackAt s0.sp decodeStateStackX) :
+    SepWPpIPlaced (decodeStatePlacedProg ext) (s0.readReg64 .x30) s0 P post
+      (decodeStatePanicPostPlaced H_inner A lim (x, st0) s0 R) :=
+  decodeState_entry_5349c_cl_placed_ofEnv
+    (PreEnv := DecodeStateEnv) (PostEnv := DecodeStateEnv)
+    hc x st0 s0 P R post hpost (fun _ h => h) hs0A hpc hrun hx8 hx0 hlen_bound hFit hP
+
+/-- Envelope-parameterized code-loaded `DecodeStatePlacedOkOfEnv`:
+`spqr::decode_state` (Block `325`) satisfies `DecodeStatePlacedOkOfEnv H_inner A lim PreEnv PostEnv ext`
+given `DecodeStateCalleeContractsClPlacedX H_inner A lim ext` whenever `DecodeStateEnv x` implies
+both `PreEnv x` and `PostEnv x`. -/
+theorem decodeState_cl_placed_ok_ofEnv [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {PreEnv PostEnv : DecodeStateGhost → List AllocEvent → Prop}
+    {ext : String → Option (State → State)}
+    (hpre_imp : ∀ x evs, DecodeStateEnv x evs → PreEnv x evs)
+    (hpost_imp : ∀ x evs, DecodeStateEnv x evs → PostEnv x evs)
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext) :
+    DecodeStatePlacedOkOfEnv H_inner A lim PreEnv PostEnv ext := by
+  apply subroutine_ok_of_sepWPp
+  rintro ⟨x, st0⟩ R s0 hpc hrun hpre halign
+  change s0.mem ⊨
+    ((spqrDecodeStatePlacedSpecOfEnv H_inner A lim PreEnv PostEnv).pre (x, st0) s0 ∗
+      ⌜LibsignalCodeRoLoaded lsmpl s0.mem⌝) ∗ R at hpre
+  rw [sepConj_assoc, sepConj_left_comm, satisfies_pure_sepConj] at hpre
+  rcases hpre with ⟨hinv, hpre⟩
+  dsimp only [spqrDecodeStatePlacedSpecOfEnv] at hpre
+  rw [sepConj_assoc, satisfies_pure_sepConj] at hpre
+  rcases hpre with ⟨⟨hx8, hx0, hlen_bound, hFit⟩, hm⟩
+  exact ⟨_, R, hm, decodeState_entry_5349c_cl_placed_ofEnv hc x st0 s0 _ R
+    (decodeStatePostPlacedOfEnv H_inner A lim PreEnv PostEnv (x, st0) s0 R)
+    rfl (hpost_imp x) halign hpc hrun hx8 hx0 hlen_bound (hFit.mono (hpre_imp x)) rfl hinv⟩
+
+/-- `spqr::decode_state` (Block `325`) satisfies `DecodeStatePlacedOk H_inner A lim ext`
+given `DecodeStateCalleeContractsClPlacedX H_inner A lim ext`. -/
+theorem decodeState_cl_placed_ok [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext) :
+    DecodeStatePlacedOk H_inner A lim ext :=
+  decodeState_cl_placed_ok_ofEnv (fun _ _ h => h) (fun _ _ h => h) hc
+
+theorem decodeState_cl_placed_okX [LibsignalPlacement]
+    {M : AllocCostModel} {H_inner : V1InnerHeapPred}
+    {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {ext : String → Option (State → State)}
+    (hc : DecodeStateCalleeContractsClPlacedX H_inner A lim ext) :
+    DecodeStatePlacedOkX H_inner A lim ext :=
+  decodeState_cl_placed_ok hc
+
+end LibsignalBinary.Proofs.SpqrV1.Top.DecodeState.OuterLoopClPlacedBudget

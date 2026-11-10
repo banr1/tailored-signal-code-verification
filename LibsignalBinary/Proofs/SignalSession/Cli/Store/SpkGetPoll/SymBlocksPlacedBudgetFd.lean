@@ -1,0 +1,720 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Proofs.Common.SharedHelpers
+public meta import LibsignalBinary.Proofs.Common.SharedHelpers -- shake: keep
+public import LibsignalBinary.Proofs.Placed.BudgetPoolSync
+public meta import LibsignalBinary.Proofs.Placed.BudgetPoolSync -- shake: keep
+public import LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.CalleesBudgetFd
+public import LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.SymBlocksPlaced
+public import LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.SymBlocksPlacedBudget
+import Arm64.Trusted.Spec.Hoare
+import Arm64.Trusted.Spec.SepLogic
+
+/-!
+# `FdsGe3Closed`-Threaded Basic-Block Proofs for `get_signed_pre_key::{closure#0}`
+
+`FdsGe3Closed`-threaded `Vec` deallocation and post-call branch basic-block theorems (`*_fd`) on
+Block `571` (`lsProg_571 H`) under `[LibsignalPlacement]`.
+-/
+
+@[expose] public section
+
+set_option autoImplicit false
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+
+namespace LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.SymBlocksPlacedBudgetFd
+
+open Arm64 ProofLib
+open CryptoVerification (LibsignalHooks LibsignalPlacement lsmpl lsρ)
+open CryptoVerification.SignalSession.Cli.Placed (blkLib_eq_571 blkPC_571 blkPl_571 lsProg_571)
+open CryptoVerification.LibsignalPublicApi.StoreKit
+  (LibsignalCodeRoLoaded sepWP_seq_lscro withLsCodeRoLoaded)
+open CryptoVerification.LibsignalTripleRatchetRepr (okTagVec speWord)
+open CryptoVerification.SignalSession (lsRustDeallocSymCli)
+open CryptoVerification.SignalSession.Cli (keyName)
+open CryptoVerification.SignalSession.Cli.Store.PlacedCommon (satisfies_lscro_pre)
+open CryptoVerification.SignalSession.Cli.Store.SpkGetPoll.Helpers
+  (cmn1_add_zero cmn1_beq_zero csp_regs sepWP_entails_step vecU8Buf_zero_elim words11At words6At)
+open CryptoVerification.SignalSession.Cli.Store.SpkGetPoll.Helpers.CliSpkPollNorm
+  (bv_sub_sub_lit extractLsb_append_hi extractLsb_append_lo readReg32_setMem_setPC_pre
+   readReg32_setPC_pre readReg64_setMem_setPC_pre readReg64_setPC_pre readReg_setMem_setPC_pre
+   readReg_setPC_pre readVReg128_setMem_pre readVReg128_setMem_setPC_pre readVReg128_setPC_pre
+   readVReg128_setPState_pre readVReg128_writeReg64_pre sp_setMem_setPC_pre sp_setPC_pre)
+open CryptoVerification.SpqrV1.Alloc (vecU8Buf)
+open LibsignalBinary.Heap
+  (AllocCostModel AllocEvent BudgetLimits RustCliAllocBudget rustDeallocEvents)
+open LibsignalBinary.Proofs.Placed.ElfLsRetAddr
+  (lsRetAddr624_blockPlacement_base_add)
+open LibsignalBinary.Proofs.SignalSession.Cli.F3.HRead.ReadFileBudgetPlaced
+  (FdsGe3Closed withFdsGe3Closed)
+open LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.CalleesBudget
+  (deallocBufCellsSpec dropSpeWordCellsSpec optDeallocBufEvents)
+open LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.CalleesBudgetFd
+  (deallocBufCellsSpec_fd dropSpeWordCellsSpec_fd)
+
+section Placed
+
+attribute [local irreducible] Program.fetch Program.externAt?
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+  sp_setPC_pre sp_setMem_setPC_pre readReg64_setPC_pre readReg64_setMem_setPC_pre
+  readReg32_setPC_pre readReg32_setMem_setPC_pre readReg_setPC_pre readReg_setMem_setPC_pre
+  readVReg128_setPC_pre readVReg128_setMem_setPC_pre readVReg128_setMem_pre
+  readVReg128_setPState_pre readVReg128_writeReg64_pre
+  extractLsb_append_lo extractLsb_append_hi bv_sub_sub_lit
+attribute [local arm64_norm, local wp_norm] words6At words11At
+
+private theorem bind_sepWP_state {prog : Program} {pc : BitVec 64} {s : State}
+    {P : SepProp} {post : State → SepProp → Prop}
+    (h : ∀ s' : State, s' = s → SepWP prog pc s' P post) :
+    SepWP prog pc s P post :=
+  h s rfl
+
+theorem spk_call_total_sepWP_lscro_fd [LibsignalPlacement] {prog : Program} {ret : BitVec 64}
+    {s : State} {P F : SepProp} {Q : State → SepProp → Prop}
+    {α : Type} {callee_pc ret_pc : BitVec 64} {spec : Spec α} (x : α)
+    (hcall : subroutine_ok prog callee_pc (withLsCodeRoLoaded lsmpl (withFdsGe3Closed spec)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hpc : s.pc = callee_pc)
+    (hrun : s.status = .Running)
+    (hsp : s.spAligned = true)
+    (hlr : s.readReg64 Reg.lr = ret_pc)
+    (hP : P ⊢ spec.pre x s ∗ F)
+    (hnext : ∀ sf : State,
+      LibsignalCodeRoLoaded lsmpl sf.mem →
+      FdsGe3Closed sf.fs →
+      sf.pc = ret_pc →
+      sf.status = .Running →
+      sf.sp = s.sp →
+      CalleeSavedPreserved s sf →
+      SepWP prog ret sf (spec.post x s sf ∗ F) Q)
+    (hexit : ∀ sf code R', ¬ (sf.mem ⊨ spec.onExit x code s sf ∗ R') := by
+      intro _ _ _ he; exact not_satisfies_false_sepConj he)
+    (hoom : ∀ sf R', ¬ (sf.mem ⊨ spec.onOom x s sf ∗ R') := by
+      intro _ _ ho; exact not_satisfies_false_sepConj ho)
+    (hpanic : ∀ sf R', ¬ (sf.mem ⊨ spec.onPanic x s sf ∗ R') := by
+      intro _ _ hp; exact not_satisfies_false_sepConj hp) :
+    SepWP prog ret s P Q := by
+  refine sepWP_seq_lscro (mid := ret_pc) hcrl ?_
+  refine ProofLib.SepWP.call_subroutine_frame (x := x) (F := F) hcall hpc hrun hsp hlr
+    (fun R hm => ?_)
+    (fun R' sm _ hp => ?_)
+    (fun R' code sm _ he => ?_)
+    (fun sm hpcm hrunm hspm hcsm =>
+      ProofLib.SepWP.done hpcm hrunm (fun hcrlm => ?_))
+    (fun R' sm _ ho => ?_)
+  · have hm_pre : s.mem ⊨ (spec.pre x s ∗ F) ∗ R :=
+      Satisfies.mono (sepConj_mono_left hP) hm
+    refine satisfies_lscro_pre hcrl ?_
+    dsimp only [withFdsGe3Closed]
+    rw [sepConj_assoc, satisfies_pure_sepConj]
+    exact ⟨hfds, by simpa only [sepConj_assoc] using hm_pre⟩
+  · dsimp only [withLsCodeRoLoaded, withFdsGe3Closed] at hp
+    exact hpanic sm R' hp
+  · dsimp only [withLsCodeRoLoaded, withFdsGe3Closed] at he
+    exact hexit sm code R' he
+  · dsimp only [withLsCodeRoLoaded, withFdsGe3Closed]
+    rw [sepConj_assoc]
+    exact SepWP.pure_elim fun hfdsm => hnext sm hcrlm hfdsm hpcm hrunm hspm hcsm
+  · dsimp only [withLsCodeRoLoaded, withFdsGe3Closed] at ho
+    exact (hoom sm (F ∗ R') ho).elim
+
+/-! ## 1. Shared `Vec` deallocation basic blocks (`*_fd`) -/
+
+theorem freeBytes_180_to_200_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s : State} {fsp bCap bPtr : BitVec 64} {bBytes : List (BitVec 8)}
+    (hDeallocCells : subroutine_ok (lsProg_571 H) (lsρ lsRustDeallocSymCli)
+      (withLsCodeRoLoaded lsmpl (deallocBufCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hpc : s.pc = (blkPl_571).base + bv% 180)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = fsp)
+    (hx23 : s.readReg64 .x23 = bCap)
+    (hx24 : s.readReg64 .x24 = bPtr) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 200) s
+      (vecU8Buf A.repAlloc bCap bPtr bBytes ∗ stackAt fsp calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧ sm.sp = fsp ∧ CalleeSavedPreserved s sm ∧ sm.trace = s.trace) ∧
+        (Pm ⊢ stackAt fsp calleeStk ∗
+          A.pool lim (M.stepEvents (optDeallocBufEvents bCap) st) sm)) := by
+  by_cases hbCap : bCap = 0#64
+  · rw [hbCap] at hx23 ⊢
+    simp only [optDeallocBufEvents, ↓reduceIte, M.stepEvents_nil]
+    apply sepWP_entails_step (vecU8Buf_zero_elim A.repAlloc bPtr bBytes)
+    rw [emp_sepConj]
+    wp_steps_sync_pool ((blkPl_571).base + bv% 200)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨?_, ⟨by simpa only [wp_norm, arm64_norm] using hfds,
+      ?_, ?_, by simp only [wp_norm, arm64_norm]⟩, by sep_frame⟩
+    · simpa only [wp_norm, arm64_norm] using hsp_align
+    · simpa only [wp_norm, arm64_norm] using hsp
+    · rw [CalleeSavedPreserved.iff_regs]
+      simp only [wp_norm, arm64_norm]
+  · have hbCap_beq : (bCap == 0#64) = false := beq_eq_false_iff_ne.mpr hbCap
+    simp only [optDeallocBufEvents, hbCap, ↓reduceIte]
+    apply sepWP_seq_lscro (mid := lsρ lsRustDeallocSymCli) hcrl
+    wp_steps_sync_pool (lsρ lsRustDeallocSymCli)
+    apply bind_sepWP_state; intro s_d hs_d
+    apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+    intro hcrl_d
+    refine spk_call_total_sepWP_lscro_fd (spec := deallocBufCellsSpec A lim calleeStk)
+      (ret_pc := s_d.readReg64 Reg.lr)
+      ((bCap, bPtr, bBytes, fsp), st)
+      hDeallocCells hcrl_d
+      (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+      (by rw [hs_d]; wp_norm_goal)
+      (by rw [hs_d]; wp_norm_lhs)
+      (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+      rfl
+      (by dsimp only [deallocBufCellsSpec]
+          rw [sepConj_assoc]
+          refine Entails.pure_right ⟨?_, ?_, ?_, ?_, hbCap, ?_⟩ (by sep_frame)
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm]
+          · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp
+          · rw [hs_d]; simp (config := { decide := true }) only [blkPl_571, wp_norm, arm64_norm])
+      fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+    dsimp only [deallocBufCellsSpec]
+    rw [sepConj_assoc]
+    apply SepWP.pure_elim; intro htr_sf
+    have hpc_sf' : sf.pc = (blkPl_571).base + bv% 200 := by
+      simpa only [hs_d, wp_norm, arm64_norm] using hpc_sf
+    have hsp' : sf.sp = fsp := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+    have hsp_align' : sf.spAligned = true := by
+      simp only [State.spAligned, hsp'] at hsp_align ⊢
+      simpa only [hsp] using hsp_align
+    apply SepWP.done hpc_sf' hrun_sf
+    refine ⟨hsp_align', ⟨hfds_sf, hsp', ?_, ?_⟩, by sep_frame⟩
+    · rw [CalleeSavedPreserved.iff_regs] at hcs_sf ⊢
+      simpa only [hs_d, wp_norm, arm64_norm] using hcs_sf
+    · simpa only [hs_d, wp_norm, arm64_norm] using htr_sf
+
+theorem freeName_200_to_220_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s0 s : State} {nCap nPtr : BitVec 64} {id : BitVec 32}
+    (hDeallocCells : subroutine_ok (lsProg_571 H) (lsρ lsRustDeallocSymCli)
+      (withLsCodeRoLoaded lsmpl (deallocBufCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hpc : s.pc = (blkPl_571).base + bv% 200)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = s0.sp - 384#64)
+    (hx22 : s.readReg64 .x22 = nPtr) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 220) s
+      (vecU8Buf A.repAlloc nCap nPtr (keyName id) ∗
+        ((s0.sp - 248#64) ↦₆₄ nCap) ∗ stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧ sm.sp = s0.sp - 384#64 ∧ CalleeSavedPreserved s sm ∧
+          sm.trace = s.trace) ∧
+        (Pm ⊢ ((s0.sp - 248#64) ↦₆₄ nCap) ∗ stackAt (s0.sp - 384#64) calleeStk ∗
+          A.pool lim (M.stepEvents (optDeallocBufEvents nCap) st) sm)) := by
+  by_cases hnCap : nCap = 0#64
+  · rw [hnCap]
+    simp only [optDeallocBufEvents, ↓reduceIte, M.stepEvents_nil]
+    apply sepWP_entails_step (vecU8Buf_zero_elim A.repAlloc nPtr (keyName id))
+    rw [emp_sepConj]
+    wp_steps_sync_pool ((blkPl_571).base + bv% 220)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨?_, ⟨by simpa only [wp_norm, arm64_norm] using hfds,
+      ?_, ?_, by simp only [wp_norm, arm64_norm]⟩, by sep_frame⟩
+    · simpa only [wp_norm, arm64_norm] using hsp_align
+    · simpa only [wp_norm, arm64_norm] using hsp
+    · rw [CalleeSavedPreserved.iff_regs]
+      simp only [wp_norm, arm64_norm]
+  · have hnCap_beq : (nCap == 0#64) = false := beq_eq_false_iff_ne.mpr hnCap
+    simp only [optDeallocBufEvents, hnCap, ↓reduceIte]
+    apply sepWP_seq_lscro (mid := lsρ lsRustDeallocSymCli) hcrl
+    wp_steps_sync_pool (lsρ lsRustDeallocSymCli)
+    apply bind_sepWP_state; intro s_d hs_d
+    apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+    intro hcrl_d
+    refine spk_call_total_sepWP_lscro_fd (spec := deallocBufCellsSpec A lim calleeStk)
+      (ret_pc := s_d.readReg64 Reg.lr)
+      ((nCap, nPtr, keyName id, s0.sp - 384#64), st)
+      hDeallocCells hcrl_d
+      (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+      (by rw [hs_d]; wp_norm_goal)
+      (by rw [hs_d]; wp_norm_lhs)
+      (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+      rfl
+      (by dsimp only [deallocBufCellsSpec]
+          rw [sepConj_assoc]
+          refine Entails.pure_right ⟨?_, ?_, ?_, ?_, hnCap, ?_⟩ (by sep_frame)
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm]
+          · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp
+          · rw [hs_d]; simp (config := { decide := true }) only [blkPl_571, wp_norm, arm64_norm])
+      fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+    dsimp only [deallocBufCellsSpec]
+    rw [sepConj_assoc]
+    apply SepWP.pure_elim; intro htr_sf
+    have hpc_sf' : sf.pc = (blkPl_571).base + bv% 220 := by
+      simpa only [hs_d, wp_norm, arm64_norm] using hpc_sf
+    have hsp' : sf.sp = s0.sp - 384#64 := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+    have hsp_align' : sf.spAligned = true := by
+      simp only [State.spAligned, hsp'] at hsp_align ⊢
+      simpa only [hsp] using hsp_align
+    apply SepWP.done hpc_sf' hrun_sf
+    refine ⟨hsp_align', ⟨hfds_sf, hsp', ?_, ?_⟩, by sep_frame⟩
+    · rw [CalleeSavedPreserved.iff_regs] at hcs_sf ⊢
+      simpa only [hs_d, wp_norm, arm64_norm] using hcs_sf
+    · simpa only [hs_d, wp_norm, arm64_norm] using htr_sf
+
+theorem freeName_280_to_344_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s0 s : State} {nCap nPtr : BitVec 64} {id : BitVec 32}
+    (hDeallocCells : subroutine_ok (lsProg_571 H) (lsρ lsRustDeallocSymCli)
+      (withLsCodeRoLoaded lsmpl (deallocBufCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hpc : s.pc = (blkPl_571).base + bv% 280)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = s0.sp - 384#64)
+    (hx22 : s.readReg64 .x22 = nPtr) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 344) s
+      (vecU8Buf A.repAlloc nCap nPtr (keyName id) ∗
+        ((s0.sp - 248#64) ↦₆₄ nCap) ∗ stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧
+          sm.sp = s0.sp - 384#64 ∧
+          calleeSavedVRegs sm = calleeSavedVRegs s ∧
+          sm.trace = s.trace ∧
+          sm.readReg64 .x19 = s.readReg64 .x19 ∧
+          sm.readReg64 .x20 = s.readReg64 .x20 ∧
+          sm.readReg64 .x26 = 0xFFFFFFFFFFFFFFFF#64 ∧
+          sm.readReg64 .x25 = s.readReg64 .x25 ∧
+          sm.readReg64 .x23 = s.readReg64 .x23 ∧
+          sm.readReg64 .x24 = s.readReg64 .x24 ∧
+          sm.readReg64 .x21 = s.readReg64 .x21) ∧
+        (Pm ⊢ ((s0.sp - 248#64) ↦₆₄ nCap) ∗ stackAt (s0.sp - 384#64) calleeStk ∗
+          A.pool lim (M.stepEvents (optDeallocBufEvents nCap) st) sm)) := by
+  by_cases hnCap : nCap = 0#64
+  · rw [hnCap]
+    simp only [optDeallocBufEvents, ↓reduceIte, M.stepEvents_nil]
+    apply sepWP_entails_step (vecU8Buf_zero_elim A.repAlloc nPtr (keyName id))
+    rw [emp_sepConj]
+    wp_steps_sync_pool ((blkPl_571).base + bv% 344)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨?_, ⟨by simpa only [wp_norm, arm64_norm] using hfds, ?_, ?_,
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm]⟩, by sep_frame⟩
+    · simpa only [wp_norm, arm64_norm] using hsp_align
+    · simpa only [wp_norm, arm64_norm] using hsp
+    · simp only [wp_norm, arm64_norm]
+  · have hnCap_beq : (nCap == 0#64) = false := beq_eq_false_iff_ne.mpr hnCap
+    simp only [optDeallocBufEvents, hnCap, ↓reduceIte]
+    apply sepWP_seq_lscro (mid := lsρ lsRustDeallocSymCli) hcrl
+    wp_steps_sync_pool (lsρ lsRustDeallocSymCli)
+    apply bind_sepWP_state; intro s_d hs_d
+    apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+    intro hcrl_d
+    refine spk_call_total_sepWP_lscro_fd (spec := deallocBufCellsSpec A lim calleeStk)
+      (ret_pc := s_d.readReg64 Reg.lr)
+      ((nCap, nPtr, keyName id, s0.sp - 384#64), st)
+      hDeallocCells hcrl_d
+      (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+      (by rw [hs_d]; wp_norm_goal)
+      (by rw [hs_d]; wp_norm_lhs)
+      (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+      rfl
+      (by dsimp only [deallocBufCellsSpec]
+          rw [sepConj_assoc]
+          refine Entails.pure_right ⟨?_, ?_, ?_, ?_, hnCap, ?_⟩ (by sep_frame)
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm]
+          · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp
+          · rw [hs_d]; simp (config := { decide := true }) only [blkPl_571, wp_norm, arm64_norm])
+      fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+    dsimp only [deallocBufCellsSpec]
+    rw [sepConj_assoc]
+    apply SepWP.pure_elim; intro htr_sf
+    simp only [hs_d, wp_norm, arm64_norm] at hpc_sf htr_sf
+    rcases csp_regs hcs_sf with
+      ⟨hx19_f, hx20_f, hx21_f, _, hx23_f, hx24_f, hx25_f, _, _, _, _, hvr_f⟩
+    simp only [hs_d, wp_norm, arm64_norm] at hx19_f hx20_f hx21_f hx23_f hx24_f hx25_f hvr_f
+    have hsp' : sf.sp = s0.sp - 384#64 := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+    have hsp_align' : sf.spAligned = true := by
+      simp only [State.spAligned, hsp'] at hsp_align ⊢
+      simpa only [hsp] using hsp_align
+    wp_steps_sync_pool ((blkPl_571).base + bv% 344)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simpa only [wp_norm, arm64_norm] using hsp_align',
+      ⟨by simpa only [wp_norm, arm64_norm] using hfds_sf,
+       by simpa only [wp_norm, arm64_norm] using hsp',
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *]⟩,
+      by sep_frame⟩
+
+/-! ## 2. Post-`Dir::get` / post-`decode_kyber_pre_key` deallocating branch blocks (`*_fd`) -/
+
+theorem step_missing_88_to_200_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s0 s : State} {g0 g1 g2 g3 c3 c4 b2 b3 d3 d4 : BitVec 64}
+    (hDeallocCells : subroutine_ok (lsProg_571 H) (lsρ lsRustDeallocSymCli)
+      (withLsCodeRoLoaded lsmpl (deallocBufCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hg0 : g0 = okTagVec)
+    (hg3 : g3 = 0#64)
+    (hpc : s.pc = (blkPl_571).base + bv% 88)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = s0.sp - 384#64)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 200) s
+      (vecU8Buf A.repAlloc g1 g2 [] ∗
+        ((s0.sp - 200#64) ↦₆₄ g0) ∗ ((s0.sp - 192#64) ↦₆₄ g1) ∗
+        ((s0.sp - 184#64) ↦₆₄ g2) ∗ ((s0.sp - 176#64) ↦₆₄ g3) ∗
+        ((s0.sp - 272#64) ↦₆₄ c3) ∗ ((s0.sp - 264#64) ↦₆₄ c4) ∗
+        ((s0.sp - 320#64) ↦₆₄ b2) ∗ ((s0.sp - 312#64) ↦₆₄ b3) ∗
+        ((s0.sp - 224#64) ↦₆₄ d3) ∗ ((s0.sp - 216#64) ↦₆₄ d4) ∗
+        stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧
+          sm.sp = s0.sp - 384#64 ∧
+          calleeSavedVRegs sm = calleeSavedVRegs s ∧
+          sm.trace = s.trace ∧
+          sm.readReg64 .x19 = s.readReg64 .x19 ∧
+          sm.readReg64 .x20 = s.readReg64 .x20 ∧
+          sm.readReg64 .x22 = s.readReg64 .x22 ∧
+          sm.readReg64 .x28 = s.readReg64 .x28 ∧
+          sm.readReg64 .x29 = s0.sp - 96#64 ∧
+          sm.readReg64 .x26 = 0xFFFFFFFFFFFFFFFF#64) ∧
+        (Pm ⊢ ((s0.sp - 200#64) ↦₆₄ g0) ∗ ((s0.sp - 192#64) ↦₆₄ g1) ∗
+          ((s0.sp - 184#64) ↦₆₄ g2) ∗ ((s0.sp - 176#64) ↦₆₄ g3) ∗
+          ((s0.sp - 272#64) ↦₆₄ c3) ∗ ((s0.sp - 264#64) ↦₆₄ c4) ∗
+          ((s0.sp - 320#64) ↦₆₄ c3) ∗ ((s0.sp - 312#64) ↦₆₄ c4) ∗
+          ((s0.sp - 224#64) ↦₆₄ c3) ∗ ((s0.sp - 216#64) ↦₆₄ c4) ∗
+          stackAt (s0.sp - 384#64) calleeStk ∗
+          A.pool lim (M.stepEvents (optDeallocBufEvents g1) st) sm)) := by
+  subst hg0; subst hg3
+  dsimp only [okTagVec]
+  by_cases hg1 : g1 = 0#64
+  · rw [hg1]
+    simp only [optDeallocBufEvents, ↓reduceIte, M.stepEvents_nil]
+    apply sepWP_entails_step (vecU8Buf_zero_elim A.repAlloc g2 [])
+    rw [emp_sepConj]
+    wp_steps_sync_pool ((blkPl_571).base + bv% 200)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨?_, ⟨by simpa only [wp_norm, arm64_norm] using hfds, ?_, ?_,
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simpa only [wp_norm, arm64_norm] using hx29,
+      by simp only [wp_norm, arm64_norm]⟩, by sep_frame⟩
+    · simpa only [wp_norm, arm64_norm] using hsp_align
+    · simpa only [wp_norm, arm64_norm] using hsp
+    · simp only [wp_norm, arm64_norm]
+  · have hg1_beq : (g1 == 0#64) = false := beq_eq_false_iff_ne.mpr hg1
+    simp only [optDeallocBufEvents, hg1, ↓reduceIte]
+    apply sepWP_seq_lscro (mid := lsρ lsRustDeallocSymCli) hcrl
+    wp_steps_sync_pool (lsρ lsRustDeallocSymCli)
+    apply bind_sepWP_state; intro s_d hs_d
+    apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+    intro hcrl_d
+    refine spk_call_total_sepWP_lscro_fd (spec := deallocBufCellsSpec A lim calleeStk)
+      (ret_pc := s_d.readReg64 Reg.lr)
+      ((g1, g2, [], s0.sp - 384#64), st)
+      hDeallocCells hcrl_d
+      (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+      (by rw [hs_d]; wp_norm_goal)
+      (by rw [hs_d]; wp_norm_lhs)
+      (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+      rfl
+      (by dsimp only [deallocBufCellsSpec]
+          rw [sepConj_assoc]
+          refine Entails.pure_right ⟨?_, ?_, ?_, ?_, hg1, ?_⟩ (by sep_frame)
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm]
+          · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp
+          · rw [hs_d]; simp (config := { decide := true }) only [blkPl_571, wp_norm, arm64_norm])
+      fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+    dsimp only [deallocBufCellsSpec]
+    rw [sepConj_assoc]
+    apply SepWP.pure_elim; intro htr_sf
+    have hpc_sf' : sf.pc = (blkPl_571).base + bv% 200 := by
+      simpa only [hs_d, wp_norm, arm64_norm] using hpc_sf
+    simp only [hs_d, wp_norm, arm64_norm] at htr_sf
+    rcases csp_regs hcs_sf with
+      ⟨hx19_f, hx20_f, _, hx22_f, _, _, _, hx26_f, _, hx28_f, hx29_f, hvr_f⟩
+    simp only [hs_d, wp_norm, arm64_norm, hx29] at hx19_f hx20_f hx22_f hx26_f hx28_f hx29_f hvr_f
+    have hsp' : sf.sp = s0.sp - 384#64 := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+    have hsp_align' : sf.spAligned = true := by
+      simp only [State.spAligned, hsp'] at hsp_align ⊢
+      simpa only [hsp] using hsp_align
+    apply SepWP.done hpc_sf' hrun_sf
+    refine ⟨hsp_align',
+      ⟨hfds_sf, hsp', hvr_f, htr_sf, hx19_f, hx20_f, hx22_f, hx28_f, hx29_f, hx26_f⟩,
+      by sep_frame⟩
+
+theorem step_decodeErr_124_to_280_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s0 s : State} {g1 g2 w0 w1 w2 w3 w4 w5 w6 b0 b1 b2 b3 c3 c4 : BitVec 64}
+    {b : BitVec 8} {bs : List (BitVec 8)}
+    (hDeallocCells : subroutine_ok (lsProg_571 H) (lsρ lsRustDeallocSymCli)
+      (withLsCodeRoLoaded lsmpl (deallocBufCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hw0 : w0 = 0xFFFFFFFFFFFFFFFF#64)
+    (hpc : s.pc = (blkPl_571).base + bv% 124)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = s0.sp - 384#64)
+    (hx23 : s.readReg64 .x23 = g1)
+    (hx24 : s.readReg64 .x24 = g2)
+    (hx27 : s.readReg64 .x27 = s0.sp - 200#64)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 280) s
+      (vecU8Buf A.repAlloc g1 g2 (b :: bs) ∗
+        ((s0.sp - 200#64) ↦₆₄ w0) ∗ ((s0.sp - 192#64) ↦₆₄ w1) ∗
+        ((s0.sp - 184#64) ↦₆₄ w2) ∗ ((s0.sp - 176#64) ↦₆₄ w3) ∗
+        ((s0.sp - 168#64) ↦₆₄ w4) ∗ ((s0.sp - 160#64) ↦₆₄ w5) ∗
+        ((s0.sp - 152#64) ↦₆₄ w6) ∗
+        ((s0.sp - 336#64) ↦₆₄ b0) ∗ ((s0.sp - 328#64) ↦₆₄ b1) ∗
+        ((s0.sp - 320#64) ↦₆₄ b2) ∗ ((s0.sp - 312#64) ↦₆₄ b3) ∗
+        ((s0.sp - 272#64) ↦₆₄ c3) ∗ ((s0.sp - 264#64) ↦₆₄ c4) ∗
+        stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧
+          sm.sp = s0.sp - 384#64 ∧
+          calleeSavedVRegs sm = calleeSavedVRegs s ∧
+          sm.trace = s.trace ∧
+          sm.readReg64 .x19 = s.readReg64 .x19 ∧
+          sm.readReg64 .x20 = s.readReg64 .x20 ∧
+          sm.readReg64 .x22 = s.readReg64 .x22 ∧
+          sm.readReg64 .x25 = w1 ∧
+          sm.readReg64 .x23 = w2 ∧
+          sm.readReg64 .x24 = w3 ∧
+          sm.readReg64 .x21 = w4) ∧
+        (Pm ⊢ ((s0.sp - 200#64) ↦₆₄ w0) ∗ ((s0.sp - 192#64) ↦₆₄ w1) ∗
+          ((s0.sp - 184#64) ↦₆₄ w2) ∗ ((s0.sp - 176#64) ↦₆₄ w3) ∗
+          ((s0.sp - 168#64) ↦₆₄ w4) ∗ ((s0.sp - 160#64) ↦₆₄ w5) ∗
+          ((s0.sp - 152#64) ↦₆₄ w6) ∗
+          ((s0.sp - 336#64) ↦₆₄ w5) ∗ ((s0.sp - 328#64) ↦₆₄ w6) ∗
+          ((s0.sp - 320#64) ↦₆₄ w5) ∗ ((s0.sp - 312#64) ↦₆₄ w6) ∗
+          ((s0.sp - 272#64) ↦₆₄ w5) ∗ ((s0.sp - 264#64) ↦₆₄ w6) ∗
+          stackAt (s0.sp - 384#64) calleeStk ∗
+          A.pool lim (M.stepEvents (optDeallocBufEvents g1) st) sm)) := by
+  subst hw0
+  by_cases hg1 : g1 = 0#64
+  · rw [hg1] at hx23 ⊢
+    simp only [optDeallocBufEvents, ↓reduceIte, M.stepEvents_nil]
+    apply sepWP_entails_step (vecU8Buf_zero_elim A.repAlloc g2 (b :: bs))
+    rw [emp_sepConj]
+    wp_steps_sync_pool ((blkPl_571).base + bv% 280)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨?_, ⟨by simpa only [wp_norm, arm64_norm] using hfds, ?_, ?_,
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm],
+      by simp only [wp_norm, arm64_norm]⟩, by sep_frame⟩
+    · simpa only [wp_norm, arm64_norm] using hsp_align
+    · simpa only [wp_norm, arm64_norm] using hsp
+    · simp only [wp_norm, arm64_norm]
+  · have hg1_beq : (g1 == 0#64) = false := beq_eq_false_iff_ne.mpr hg1
+    simp only [optDeallocBufEvents, hg1, ↓reduceIte]
+    apply sepWP_seq_lscro (mid := lsρ lsRustDeallocSymCli) hcrl
+    wp_steps_sync_pool (lsρ lsRustDeallocSymCli)
+    apply bind_sepWP_state; intro s_d hs_d
+    apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+    intro hcrl_d
+    refine spk_call_total_sepWP_lscro_fd (spec := deallocBufCellsSpec A lim calleeStk)
+      (ret_pc := s_d.readReg64 Reg.lr)
+      ((g1, g2, b :: bs, s0.sp - 384#64), st)
+      hDeallocCells hcrl_d
+      (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+      (by rw [hs_d]; wp_norm_goal)
+      (by rw [hs_d]; wp_norm_lhs)
+      (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+      rfl
+      (by dsimp only [deallocBufCellsSpec]
+          rw [sepConj_assoc]
+          refine Entails.pure_right ⟨?_, ?_, ?_, ?_, hg1, ?_⟩ (by sep_frame)
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+          · rw [hs_d]; simp only [wp_norm, arm64_norm]
+          · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp
+          · rw [hs_d]; simp (config := { decide := true }) only [blkPl_571, wp_norm, arm64_norm])
+      fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+    dsimp only [deallocBufCellsSpec]
+    rw [sepConj_assoc]
+    apply SepWP.pure_elim; intro htr_sf
+    simp only [hs_d, wp_norm, arm64_norm] at hpc_sf htr_sf
+    rcases csp_regs hcs_sf with
+      ⟨hx19_f, hx20_f, _, hx22_f, _, _, _, _, hx27_f, _, hx29_f, hvr_f⟩
+    simp only [hs_d, wp_norm, arm64_norm, hx27, hx29] at hx19_f hx20_f hx22_f hx27_f hx29_f hvr_f
+    have hsp' : sf.sp = s0.sp - 384#64 := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+    have hsp_align' : sf.spAligned = true := by
+      simp only [State.spAligned, hsp'] at hsp_align ⊢
+      simpa only [hsp] using hsp_align
+    wp_steps_sync_pool ((blkPl_571).base + bv% 280)
+    apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+    refine ⟨by simpa only [wp_norm, arm64_norm] using hsp_align',
+      ⟨by simpa only [wp_norm, arm64_norm] using hfds_sf,
+       by simpa only [wp_norm, arm64_norm] using hsp',
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *],
+       by simp only [wp_norm, arm64_norm, *]⟩,
+      by sep_frame⟩
+
+theorem step_found_220_to_344_placed_fd [LibsignalPlacement] {H : LibsignalHooks}
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits} {calleeStk : Nat}
+    {st : M.σ} {s0 s : State}
+    {w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 : BitVec 64}
+    {a1 a2 a3 a4 b0 b1 : BitVec 64}
+    (hDropCells : subroutine_ok (lsProg_571 H) (lsmpl.base 553)
+      (withLsCodeRoLoaded lsmpl (dropSpeWordCellsSpec_fd A lim calleeStk)))
+    (hcrl : LibsignalCodeRoLoaded lsmpl s.mem)
+    (hfds : FdsGe3Closed s.fs)
+    (hw0 : w0 ≠ 0xFFFFFFFFFFFFFFFF#64)
+    (hpc : s.pc = (blkPl_571).base + bv% 220)
+    (hrun : s.status = .Running)
+    (hsp_align : s.spAligned = true)
+    (hsp : s.sp = s0.sp - 384#64)
+    (hx29 : s.readReg64 .x29 = s0.sp - 96#64)
+    (hx26 : s.readReg64 .x26 = w0)
+    (hx25 : s.readReg64 .x25 = w1)
+    (hx28 : s.readReg64 .x28 = w2)
+    (hx21 : s.readReg64 .x21 = w4) :
+    SepWP (lsProg_571 H) ((blkPl_571).base + bv% 344) s
+      (words6At (s0.sp - 200#64) w0 w1 w2 w3 w4 w5 ∗
+        ((s0.sp - 376#64) ↦₆₄ w3) ∗ ((s0.sp - 368#64) ↦₆₄ a1) ∗ ((s0.sp - 360#64) ↦₆₄ a2) ∗
+        ((s0.sp - 352#64) ↦₆₄ a3) ∗ ((s0.sp - 344#64) ↦₆₄ a4) ∗
+        ((s0.sp - 336#64) ↦₆₄ b0) ∗ ((s0.sp - 328#64) ↦₆₄ b1) ∗
+        ((s0.sp - 304#64) ↦₆₄ w7) ∗ ((s0.sp - 296#64) ↦₆₄ w8) ∗
+        ((s0.sp - 288#64) ↦₆₄ w9) ∗ ((s0.sp - 280#64) ↦₆₄ w10) ∗
+        ((s0.sp - 224#64) ↦₆₄ w5) ∗ ((s0.sp - 216#64) ↦₆₄ w6) ∗
+        stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st s)
+      (fun sm Pm =>
+        sm.spAligned = true ∧
+        (FdsGe3Closed sm.fs ∧
+          sm.sp = s0.sp - 384#64 ∧
+          calleeSavedVRegs sm = calleeSavedVRegs s ∧
+          sm.trace = s.trace ∧
+          sm.readReg64 .x19 = s.readReg64 .x19 ∧
+          sm.readReg64 .x20 = s.readReg64 .x20 ∧
+          sm.readReg64 .x26 = w0 ∧
+          sm.readReg64 .x25 = w1 ∧
+          sm.readReg64 .x23 = w2 ∧
+          sm.readReg64 .x24 = w3 ∧
+          sm.readReg64 .x21 = w4) ∧
+        (Pm ⊢ (∃∗ e0 : BitVec 64, ∃∗ e1 : BitVec 64, ∃∗ e2 : BitVec 64,
+            ∃∗ e3 : BitVec 64, ∃∗ e4 : BitVec 64, ∃∗ e5 : BitVec 64,
+              words6At (s0.sp - 200#64) e0 e1 e2 e3 e4 e5) ∗
+          ((s0.sp - 376#64) ↦₆₄ w3) ∗ ((s0.sp - 368#64) ↦₆₄ w7) ∗ ((s0.sp - 360#64) ↦₆₄ w8) ∗
+          ((s0.sp - 352#64) ↦₆₄ w9) ∗ ((s0.sp - 344#64) ↦₆₄ w10) ∗
+          ((s0.sp - 336#64) ↦₆₄ w5) ∗ ((s0.sp - 328#64) ↦₆₄ w6) ∗
+          ((s0.sp - 304#64) ↦₆₄ w7) ∗ ((s0.sp - 296#64) ↦₆₄ w8) ∗
+          ((s0.sp - 288#64) ↦₆₄ w9) ∗ ((s0.sp - 280#64) ↦₆₄ w10) ∗
+          ((s0.sp - 224#64) ↦₆₄ w5) ∗ ((s0.sp - 216#64) ↦₆₄ w6) ∗
+          stackAt (s0.sp - 384#64) calleeStk ∗ A.pool lim st sm)) := by
+  have _hcmn1 := cmn1_beq_zero hw0
+  have _hcmn2 := cmn1_add_zero hw0
+  dsimp only [words6At, speWord]
+  apply sepWP_seq_lscro (mid := lsmpl.base 553) hcrl
+  wp_steps_sync_pool (lsmpl.base 553)
+  apply bind_sepWP_state; intro s_d hs_d
+  apply SepWP.done (by rw [hs_d]; wp_norm_goal) (by rw [hs_d]; wp_norm_lhs)
+  intro hcrl_d
+  refine spk_call_total_sepWP_lscro_fd (spec := dropSpeWordCellsSpec A lim calleeStk)
+    (ret_pc := s_d.readReg64 Reg.lr)
+    ((s0.sp - 200#64, w1, w2, w3, w4, w5, s0.sp - 384#64), st)
+    hDropCells hcrl_d
+    (by rw [hs_d]; simpa only [wp_norm, arm64_norm] using hfds)
+    (by rw [hs_d]; wp_norm_goal)
+    (by rw [hs_d]; wp_norm_lhs)
+    (by rw [hs_d]; simpa only [State.spAligned, wp_norm, arm64_norm] using hsp_align)
+    rfl
+    (by dsimp only [dropSpeWordCellsSpec, words6At, speWord]
+        simp only [BitVec.reduceAdd]
+        rw [sepConj_assoc]
+        refine Entails.pure_right ⟨?_, ?_⟩ (by sep_frame)
+        · rw [hs_d]; simp only [wp_norm, arm64_norm, *]
+        · rw [hs_d]; simpa only [wp_norm, arm64_norm] using hsp)
+    fun sf _hcrl_sf hfds_sf hpc_sf hrun_sf hsp_sf hcs_sf => ?_
+  dsimp only [dropSpeWordCellsSpec]
+  simp only [sepExists_sepConj_left]
+  refine SepWP.exists_elim fun c0 => SepWP.exists_elim fun c1 =>
+    SepWP.exists_elim fun c2 => SepWP.exists_elim fun c3 =>
+    SepWP.exists_elim fun c4 => SepWP.exists_elim fun c5 => ?_
+  rw [sepConj_assoc]
+  apply SepWP.pure_elim; intro htr_sf
+  simp only [hs_d, wp_norm, arm64_norm] at hpc_sf htr_sf
+  rcases csp_regs hcs_sf with
+    ⟨hx19_f, hx20_f, hx21_f, _, _, _, hx25_f, hx26_f, _, hx28_f, hx29_f, hvr_f⟩
+  simp only [hs_d, wp_norm, arm64_norm, hx21, hx25, hx26, hx28, hx29] at hx19_f hx20_f hx21_f hx25_f hx26_f hx28_f hx29_f hvr_f
+  have hsp' : sf.sp = s0.sp - 384#64 := by simpa only [hs_d, wp_norm, arm64_norm, hsp] using hsp_sf
+  have hsp_align' : sf.spAligned = true := by
+    simp only [State.spAligned, hsp'] at hsp_align ⊢
+    simpa only [hsp] using hsp_align
+  dsimp only [words6At]
+  wp_steps_sync_pool ((blkPl_571).base + bv% 344)
+  apply SepWP.done (by wp_norm_goal) (by wp_norm_lhs)
+  refine ⟨by simpa only [wp_norm, arm64_norm] using hsp_align',
+    ⟨by simpa only [wp_norm, arm64_norm] using hfds_sf,
+     by simpa only [wp_norm, arm64_norm] using hsp',
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm, *],
+     by simp only [wp_norm, arm64_norm],
+     by simp only [wp_norm, arm64_norm, *]⟩, ?_⟩
+  exact Entails.sepExists_right c0 (Entails.sepExists_right c1 (Entails.sepExists_right c2
+    (Entails.sepExists_right c3 (Entails.sepExists_right c4
+      (Entails.sepExists_right c5 (by sep_frame))))))
+
+end Placed
+
+end LibsignalBinary.Proofs.SignalSession.Cli.Store.SpkGetPoll.SymBlocksPlacedBudgetFd

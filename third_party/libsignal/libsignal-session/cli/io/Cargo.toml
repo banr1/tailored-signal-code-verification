@@ -1,0 +1,16 @@
+[package]
+name = "libsignal-cli-io"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# The process I/O of the `libsignal-cli` CLI (`../`): the four functions of `src/lib.rs`. A crate of
+# its own, translated separately by `translation.toml` (`SignalSessionIoObj` /
+# `SignalSessionIoPlacedObj`) rather than inside `../../translation.toml` so `libsignalSessionObj`
+# offsets do not move; its four functions are externs of `libsignalSessionObj`, modeled by the
+# `CliRun` hooks until they are discharged against `SignalSessionIoPlacedObj`. Build it from `../..`,
+# with that crate's `Cargo.lock` and release profile.
+#
+# NOTE: standalone like the parent crate: no `[workspace]` table.
+
+[lib]
+crate-type = ["rlib"]

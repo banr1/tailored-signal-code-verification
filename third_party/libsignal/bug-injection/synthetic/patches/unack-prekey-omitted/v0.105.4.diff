@@ -1,0 +1,18 @@
+diff --git a/rust/protocol/src/session.rs b/rust/protocol/src/session.rs
+--- a/rust/protocol/src/session.rs
++++ b/rust/protocol/src/session.rs
+@@ -267,14 +267,6 @@ pub async fn process_prekey_bundle<R: Rng + CryptoRng>(
+         their_one_time_prekey_id.map_or_else(|| "<none>".to_string(), |id| id.to_string())
+     );
+ 
+-    session.set_unacknowledged_pre_key_message(
+-        their_one_time_prekey_id,
+-        bundle.signed_pre_key_id()?,
+-        &our_base_key_pair.public_key,
+-        now,
+-    );
+-    session.set_unacknowledged_kyber_pre_key_id(bundle.kyber_pre_key_id()?);
+-
+     session.set_local_registration_id(identity_store.get_local_registration_id().await?);
+     session.set_remote_registration_id(bundle.registration_id()?);
+ 

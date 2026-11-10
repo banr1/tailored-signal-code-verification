@@ -1,0 +1,8 @@
+import ScratchFixture.PRow87DeniedRealizer
+
+namespace ScratchFixture.PRow87CallerPureCore
+
+theorem prow87_pure_core : True = True :=
+  Classical.not_not._simp_8701
+
+end ScratchFixture.PRow87CallerPureCore

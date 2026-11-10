@@ -1,0 +1,23 @@
+[package]
+name = "snapshot-link"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Untrusted link recipe for process snapshots: links the exact relocatable objects that
+# `rust-obj2lean` extracts for a `translation.toml` into a static non-PIE AArch64 Linux
+# executable with `ld.lld`, pinning them at the offsets of the exported `Arm64.Obj.LinkedImage`.
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+object = { version = "0.36", features = ["write"] }
+rust-obj2lean = { path = "../rust-obj2lean" }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+which = "7"
+
+[dev-dependencies]
+object = { version = "0.36", features = ["write"] }
+

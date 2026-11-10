@@ -1,0 +1,7 @@
+import ScratchFixture.P5M2
+
+namespace ScratchFixture.P5Root
+
+theorem p5_uses_only_runBound : ScratchFixture.P5M2.runBound = 4096 := rfl
+
+end ScratchFixture.P5Root

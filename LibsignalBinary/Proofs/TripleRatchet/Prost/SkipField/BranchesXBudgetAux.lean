@@ -1,0 +1,936 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import LibsignalBinary.Heap.SpecBudget
+public import LibsignalBinary.Proofs.Placed.BudgetPoolSync
+public meta import LibsignalBinary.Proofs.Placed.BudgetPoolSync -- shake: keep
+public import LibsignalBinary.Proofs.Placed.BudgetVmSteps
+public meta import LibsignalBinary.Proofs.Placed.BudgetVmSteps -- shake: keep
+public import LibsignalBinary.Proofs.TripleRatchet.Prost.Int32MergeBudgetAux
+public import LibsignalBinary.Proofs.TripleRatchet.Prost.SkipFieldLemmasBudget
+public meta import Lean -- shake: keep
+import LibsignalBinary.Proofs.E2E.Pqxdh.ResponderStore.ResponderStoreCodeSym
+import LibsignalBinary.Proofs.ProtoCodecRoundTrip
+import LibsignalBinary.Proofs.VarintBridge
+import ProofLib.SepLogic.WP.Apply
+
+/-!
+# Budget-Threaded `skip_field` Call Combinators and Fixed-Width / Varint Branches
+
+Call combinators, allocator-envelope bridges, and relocatable per-block proofs for the depth-zero,
+`EndGroup`, `SixtyFourBit`, `ThirtyTwoBit`, and `Varint` branches of `prost::encoding::skip_field`
+(block 1).
+-/
+
+namespace LibsignalBinary.Proofs.TripleRatchet.Prost.SkipField.BranchesXBudgetAux
+
+public meta section
+
+open Lean Elab Tactic Meta Arm64 ProofLib in
+/-- Pull all `⌜φ⌝` atoms in the precondition `P` of a `SepWP` goal to the front via `sep_ac_rfl`,
+    eliminate them into the local context, and recursively split conjunctions. -/
+elab "wp_pull_pures" : tactic => do
+  let rec collectSepAtoms (fuel : Nat) (e : Expr) : Array Expr :=
+    match fuel with
+    | 0 => #[e]
+    | fuel + 1 =>
+      let e' := e.consumeMData
+      if e'.isAppOfArity ``SepProp.sepConj 2 then
+        collectSepAtoms fuel (e'.getArg! 0) ++ collectSepAtoms fuel (e'.getArg! 1)
+      else
+        #[e']
+  let rec splitAndHyps (fuel : Nat) (g : MVarId) (fvars : List FVarId) : TacticM MVarId := do
+    match fuel, fvars with
+    | 0, _ => return g
+    | _, [] => return g
+    | fuel + 1, fv :: rest =>
+      let ty ← g.withContext do instantiateMVars (← fv.getType)
+      let ty' := ty.consumeMData
+      if ty'.isAppOfArity ``And 2 then
+        let a := ty'.getArg! 0
+        let b := ty'.getArg! 1
+        let p1 := mkApp3 (mkConst ``And.left) a b (mkFVar fv)
+        let p2 := mkApp3 (mkConst ``And.right) a b (mkFVar fv)
+        let n1 ← mkFreshUserName `hp
+        let n2 ← mkFreshUserName `hp
+        let g1 ← g.assert n1 a p1
+        let (fv1, g2) ← g1.intro1P
+        let g3 ← g2.assert n2 b p2
+        let (fv2, g4) ← g3.intro1P
+        let g5 ← g4.tryClear fv
+        splitAndHyps fuel g5 (fv1 :: fv2 :: rest)
+      else
+        splitAndHyps fuel g rest
+  let g ← getMainGoal
+  g.withContext do
+    let ty := (← instantiateMVars (← g.getType)).consumeMData
+    unless ty.isAppOfArity ``SepWP 6 do
+      throwError "wp_pull_pures: expected SepWP goal"
+    let pExpr := ty.getArg! 3
+    let atoms := collectSepAtoms 200 pExpr
+    let (pures, nonPures) := atoms.partition (fun a => a.isAppOfArity ``SepProp.pure 1)
+    if pures.isEmpty then return
+    let pRest : Expr :=
+      if nonPures.isEmpty then mkConst ``SepProp.emp
+      else
+        let n := nonPures.size
+        (List.range (n - 1)).foldr
+          (fun i acc => mkApp2 (mkConst ``SepProp.sepConj) nonPures[i]! acc) nonPures[n - 1]!
+    let rhs := pures.foldr (fun p acc => mkApp2 (mkConst ``SepProp.sepConj) p acc) pRest
+    let progE := ty.getArg! 0
+    let targetE := ty.getArg! 1
+    let stateE := ty.getArg! 2
+    let postE := ty.getArg! 4
+    let oomE := ty.getArg! 5
+    let eqTy ← mkEq pExpr rhs
+    let eqPrf ← mkFreshExprMVar eqTy
+    let gs ← getGoals
+    setGoals [eqPrf.mvarId!]
+    evalTactic (← `(tactic| sep_ac_rfl))
+    setGoals gs
+    let eqPrfInst ← instantiateMVars eqPrf
+    let fn := mkLambda `p .default (mkConst ``SepProp)
+      (mkApp6 (mkConst ``SepWP) progE targetE stateE (mkBVar 0) postE oomE)
+    let goalEqPrf ← mkCongrArg fn eqPrfInst
+    let newGoalTy := mkApp6 (mkConst ``SepWP) progE targetE stateE rhs postE oomE
+    let g1 ← g.replaceTargetEq newGoalTy goalEqPrf
+    replaceMainGoal [g1]
+    let newFVars ← (List.range pures.size).foldlM (fun acc _ => do
+      let hId ← mkFreshUserName `hp
+      let hStx := mkIdent hId
+      evalTactic (← `(tactic| (
+        apply ProofLib.SepWP.pure_elim
+        intro $hStx:ident)))
+      let curG ← getMainGoal
+      curG.withContext do
+        match (← getLCtx).findFromUserName? hId with
+        | some decl => return decl.fvarId :: acc
+        | none => return acc) ([] : List FVarId)
+    let curG ← getMainGoal
+    let finalG ← splitAndHyps 200 curG newFVars
+    replaceMainGoal [finalG]
+
+end
+
+@[expose] public section
+
+set_option autoImplicit false
+
+open Arm64 ProofLib SepProp
+open LibsignalBinary.Heap
+  (AllocCostModel AllocEvent BudgetLimits FitsEnv RustCliAllocBudget)
+open LibsignalBinary.Heap.SpecBudget
+  (DecodeErrorFromEnv decodeErrorFromBudgetSpecWithStack)
+open CryptoVerification
+  (LibsignalCodeLoaded LibsignalHooks LibsignalPlacement lsmpl
+   blkPC_1 blkPl_1 withLsCodeLoaded)
+open CryptoVerification.LibsignalProtoCodec
+  (WireType decodeVarint decodeVarintAux skipBytes skipField)
+open CryptoVerification.LibsignalTripleRatchet
+  (KindNoHeap)
+open CryptoVerification.LibsignalTripleRatchet.VarintBridge
+  (decodeVarint_eq_varintSlow)
+open CryptoVerification.LibsignalTripleRatchet.Prost
+  (SepWPp.of_sepWP_lscl SkipFieldGhost VarintSlicePre
+   bv_len_sub_consumed bv_len_sub_skip bv_ptr_add_skip_top
+   cbz_depth_succ cbz_depth_zero cbz_len_cons_false decodeErrorHookStackX decodeVarint_1
+   getLsbD_7_of_gt getLsbD_7_of_le len_cons_sub_one len_ult_consumed_false
+   memRegion_48_skipSlice memRegion_48_split
+   pointsTo64_pair_entails_memRegion16 pointsToBytes_split_last
+   skipBelowX_err skipBelowX_err_entails skipBelowX_leaf skipBelowX_leaf_entails
+   skipBelowX_slow skipBelowX_slow_entails
+   skipField_depth_zero skipField_succ_endGroup
+   skipField_succ_sixtyFourBit skipField_succ_thirtyTwoBit skipField_succ_varint
+   skipSliceErr_entails_memRegion48 skipSliceOk_entails_memRegion48
+   sliceCursorAfter sliceCursorAt stackAt_skipFieldX
+   ule_len_of_ge ule_len_of_lt ult_10_of_ge_11 ult_10_of_lt_11
+   varintSliceResultAt w0_and_255_eq)
+open LibsignalBinary.Proofs.TripleRatchet.Hooks.DefsBudget
+  (DecodeVarintSlowEnv decodeVarintSlowEvents)
+open LibsignalBinary.Proofs.TripleRatchet.Prost.DefsBudget
+  (DecodeVarintSliceEnv SkipFieldEnv decodeVarintSliceEvents decodeVarintSliceSpecGen
+   decodeVarintSliceSpecX skipFieldEventsCore)
+open LibsignalBinary.Proofs.TripleRatchet.Prost.Int32MergeBudgetAux
+  (decodeVarintSlowSpecGen decodeVarintSlowSpecX)
+open LibsignalBinary.Proofs.TripleRatchet.Prost.SkipFieldLemmasBudget
+  (skipFieldSpecAtX)
+
+set_option maxRecDepth 200000
+set_option maxHeartbeats 400000
+
+attribute [local irreducible] Program.fetch Program.externAt?
+attribute [local arm64_norm] bv_sub_add_lit BitVec.toNat_zero
+
+local macro "wp_reach" : tactic =>
+  `(tactic| apply SepWP.done (by simp only [arm64_norm]) (by simp only [arm64_norm, *]))
+
+/-! ## Call combinators and envelope bridge lemmas -/
+
+theorem call_inv_lscl {α : Type} {prog : Program} {pl : Obj.MultiPlacement}
+    {entry ret_pc ret : BitVec 64} {spec : Spec α} {x : α} {F : SepProp}
+    {s : State} {P : SepProp} {Q Qp : State → SepProp → Prop}
+    (hcall : subroutine_ok prog entry spec)
+    (hcl : LibsignalCodeLoaded pl s.mem)
+    (hpc : s.pc = entry) (hrun : s.status = .Running) (hsp : s.spAligned = true)
+    (hlr : s.readReg64 Reg.lr = ret_pc)
+    (hpre : ∀ R : SepProp, (s.mem ⊨ P ∗ R) → (s.mem ⊨ spec.pre x s ∗ (F ∗ R)))
+    (hexit : ∀ sf code R', sf.status = .Exited code → (sf.mem ⊨ spec.onExit x code s sf ∗ R') → False)
+    (hpanic : ∀ sf R', sf.status = .Panicked → (sf.mem ⊨ spec.onPanic x s sf ∗ R') → False)
+    (hoom : ∀ sf R', sf.status = .OutOfMemory → (sf.mem ⊨ spec.onOom x s sf ∗ R') → False)
+    (hnext : ∀ sf : State, sf.pc = ret_pc → sf.status = .Running →
+      sf.sp = s.sp → CalleeSavedPreserved s sf →
+      LibsignalCodeLoaded pl sf.mem →
+      SepWPp prog ret sf (spec.post x s sf ∗ F) Q Qp) :
+    SepWPp prog ret s P Q Qp := by
+  intro R hm hL
+  obtain ⟨sm, hsteps, hout, _⟩ :=
+    hcall.no_fault_before_outcome x (F ∗ R) s hpc hrun (hpre R hm) hsp hL
+  rcases hout with ⟨⟨hpcm, _, hrunm⟩, ⟨hspm, hcsm⟩, hpost⟩ | ⟨hpan, hpost⟩ | ⟨code, hex, hpost⟩ | ⟨hoom_s, hpost⟩
+  · rw [← sepConj_assoc] at hpost
+    rw [hlr] at hpcm
+    have hclm : LibsignalCodeLoaded pl sm.mem := hcl.of_keepsFrozen hsteps.keepsFrozen
+    obtain ⟨sf, hsteps', hout'⟩ :=
+      hnext sm hpcm hrunm hspm hcsm hclm R hpost (hsteps.codeLoaded hL)
+    exact ⟨sf, hsteps.trans hsteps', hout'⟩
+  · exact (hpanic sm _ hpan hpost).elim
+  · exact (hexit sm code _ hex hpost).elim
+  · exact (hoom sm _ hoom_s hpost).elim
+
+theorem call_frame_budget_lscl {α : Type} {prog : Program} {pl : Obj.MultiPlacement}
+    {entry ret_pc ret : BitVec 64} {spec : Spec α} {x : α} {φ : Prop}
+    {T F : SepProp} {s : State} {P : SepProp} {Q Qp : State → SepProp → Prop}
+    (hcall : subroutine_ok prog entry (withLsCodeLoaded pl spec))
+    (hcl : LibsignalCodeLoaded pl s.mem)
+    (hpc : s.pc = entry) (hrun : s.status = .Running) (hsp : s.spAligned = true)
+    (hlr : s.readReg64 Reg.lr = ret_pc)
+    (hspec : spec.pre x s = ⌜φ⌝ ∗ T)
+    (hφ : φ) (hP : P = T ∗ F)
+    (hnext : ∀ sf : State, sf.pc = ret_pc → sf.status = .Running →
+      sf.sp = s.sp → CalleeSavedPreserved s sf →
+      LibsignalCodeLoaded pl sf.mem →
+      SepWPp prog ret sf (spec.post x s sf ∗ F) Q Qp)
+    (hexit : ∀ sf code R', sf.status = .Exited code → (sf.mem ⊨ spec.onExit x code s sf ∗ R') → False := by
+      intro _ _ _ _ h; exact not_satisfies_false_sepConj h)
+    (hpanic : ∀ sf R', sf.status = .Panicked → (sf.mem ⊨ spec.onPanic x s sf ∗ R') → False := by
+      intro _ _ _ h; exact not_satisfies_false_sepConj h)
+    (hoom : ∀ sf R', sf.status = .OutOfMemory → (sf.mem ⊨ spec.onOom x s sf ∗ R') → False := by
+      intro _ _ _ h; exact not_satisfies_false_sepConj h) :
+    SepWPp prog ret s P Q Qp := by
+  refine call_inv_lscl (spec := withLsCodeLoaded pl spec) (x := x) (F := F)
+    hcall hcl hpc hrun hsp hlr ?_ hexit hpanic hoom hnext
+  intro R hm
+  dsimp only [withLsCodeLoaded]
+  rw [hspec, sepConj_assoc, sepConj_left_comm (⌜φ⌝ ∗ T), satisfies_pure_sepConj]
+  refine ⟨hcl, ?_⟩
+  rw [sepConj_assoc, satisfies_pure_sepConj, ← sepConj_assoc, ← hP]
+  exact ⟨hφ, hm⟩
+
+theorem fitsEnv_decodeErrorFrom_of_skipField_none {M : AllocCostModel} {lim : BudgetLimits}
+    {st : M.σ} {x : SkipFieldGhost}
+    (hnone : skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (hfits : FitsEnv M lim st (SkipFieldEnv x)) :
+    FitsEnv M lim st DecodeErrorFromEnv :=
+  hfits.mono fun evs he => by
+    simpa only [SkipFieldEnv, skipFieldEventsCore, hnone, DecodeErrorFromEnv] using he
+
+theorem skipFieldEnv_of_decodeErrorFrom {x : SkipFieldGhost} {evs : List AllocEvent}
+    (hnone : skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (he : DecodeErrorFromEnv evs) :
+    SkipFieldEnv x evs := by
+  simpa only [SkipFieldEnv, skipFieldEventsCore, hnone, DecodeErrorFromEnv] using he
+
+theorem skipFieldEnv_nil_of_some {x : SkipFieldGhost} {rest : List (BitVec 8)}
+    (hsome : skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = some rest) :
+    SkipFieldEnv x [] := by
+  simp only [SkipFieldEnv, skipFieldEventsCore, hsome]
+
+theorem fitsEnv_varintSlice_of_skipField {M : AllocCostModel} {lim : BudgetLimits}
+    {st : M.σ} {x : SkipFieldGhost} {cur : List (BitVec 8)}
+    (himp : decodeVarint cur = none →
+      skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (hfits : FitsEnv M lim st (SkipFieldEnv x)) :
+    FitsEnv M lim st (DecodeVarintSliceEnv cur) := by
+  intro evs he
+  simp only [DecodeVarintSliceEnv, decodeVarintSliceEvents] at he
+  cases hd : decodeVarint cur with
+  | some _ =>
+    rw [hd] at he; subst he; simp
+  | none =>
+    rw [hd] at he; subst he
+    exact hfits _ (by simp [SkipFieldEnv, skipFieldEventsCore, himp hd])
+
+theorem fitsEnv_varintSlow_of_skipField {M : AllocCostModel} {lim : BudgetLimits}
+    {st : M.σ} {x : SkipFieldGhost} {cur : List (BitVec 8)}
+    (himp : decodeVarint cur = none →
+      skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (hfits : FitsEnv M lim st (SkipFieldEnv x)) :
+    FitsEnv M lim st (DecodeVarintSlowEnv cur) := by
+  have hsl := fitsEnv_varintSlice_of_skipField himp hfits
+  refine hsl.mono fun evs he => ?_
+  cases hd : decodeVarint cur <;>
+    simpa only [DecodeVarintSlowEnv, decodeVarintSlowEvents, DecodeVarintSliceEnv,
+      decodeVarintSliceEvents, decodeVarint_eq_varintSlow cur, hd, Option.map] using he
+
+theorem skipFieldEnv_of_varintSlice_none {x : SkipFieldGhost} {cur : List (BitVec 8)}
+    {evs : List AllocEvent}
+    (hd : decodeVarint cur = none)
+    (hnone : skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (he : DecodeVarintSliceEnv cur evs) :
+    SkipFieldEnv x evs := by
+  simpa only [DecodeVarintSliceEnv, decodeVarintSliceEvents, hd,
+    SkipFieldEnv, skipFieldEventsCore, hnone] using he
+
+theorem skipFieldEnv_of_varintSlow_none {x : SkipFieldGhost} {cur : List (BitVec 8)}
+    {evs : List AllocEvent}
+    (hd : decodeVarint cur = none)
+    (hnone : skipField (2 * x.bs.length + 2) x.depth x.tag x.wt x.bs = none)
+    (he : DecodeVarintSlowEnv cur evs) :
+    SkipFieldEnv x evs := by
+  simpa only [DecodeVarintSlowEnv, decodeVarintSlowEvents, decodeVarint_eq_varintSlow cur,
+    hd, Option.map, SkipFieldEnv, skipFieldEventsCore, hnone] using he
+
+theorem varintSliceEnv_some_eq_nil {cur : List (BitVec 8)} {v : BitVec 64}
+    {rest : List (BitVec 8)} {evs : List AllocEvent}
+    (hd : decodeVarint cur = some (v, rest))
+    (he : DecodeVarintSliceEnv cur evs) :
+    evs = [] := by
+  simpa only [DecodeVarintSliceEnv, decodeVarintSliceEvents, hd] using he
+
+theorem varintSlowEnv_some_eq_nil {cur : List (BitVec 8)} {v : BitVec 64}
+    {rest : List (BitVec 8)} {evs : List AllocEvent}
+    (hd : decodeVarint cur = some (v, rest))
+    (he : DecodeVarintSlowEnv cur evs) :
+    evs = [] := by
+  simpa only [DecodeVarintSlowEnv, decodeVarintSlowEvents, decodeVarint_eq_varintSlow cur,
+    hd, Option.map] using he
+
+/-! ## Relocatable per-block branch lemmas (block 1) -/
+
+set_option maxHeartbeats 800000 in
+theorem skipField_depth_zero_placed_ok_x [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : LibsignalHooks}
+    (hFromCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 261)
+      (withLsCodeLoaded lsmpl (decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX))) :
+    subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (blkPl_1).base
+      (withLsCodeLoaded lsmpl (skipFieldSpecAtX A lim 0 (fun _ => True))) := by
+  unfold withLsCodeLoaded
+  conv =>
+    arg 3
+    unfold skipFieldSpecAtX
+    simp only [sliceCursorAt, stackAt_skipFieldX _ 0 (by decide),
+      sepExists_sepConj_left, sepExists_sepConj_right]
+  wpp_init x s0
+  rcases x with ⟨⟨wt, tag, depth, bufRef, slot, ptr, bs⟩, st⟩
+  dsimp only at *
+  have hcl0 : LibsignalCodeLoaded lsmpl s0.mem := by assumption
+  have hdepth_eq : depth = 0 := by assumption
+  subst hdepth_eq
+  have hx3 : (s0.readReg64 (Reg.gpr 3#5)).setWidth 32 = BitVec.ofNat 32 0 := by assumption
+  have hfits : FitsEnv M lim st (SkipFieldEnv ⟨wt, tag, 0, bufRef, slot, ptr, bs⟩) := by assumption
+  have hcbz := cbz_depth_zero hx3
+  have hnone := skipField_depth_zero (2 * bs.length + 2) tag wt bs
+  have hfits_de := fitsEnv_decodeErrorFrom_of_skipField_none
+    (x := ⟨wt, tag, 0, bufRef, slot, ptr, bs⟩) hnone hfits
+  rw [hnone]
+  apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 261) hcl0
+  conv => arg 4; rw [memRegion_48_split (s0.sp - 96#64), bv_sub_add_lit s0.sp 96 8]
+  simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+  apply SepWP.exists_elim; intro v_err0
+  wp_steps_sync_pool (lsmpl.base 261)
+  simp only [State.setMem_setMem]
+  apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 bs.length)) (by sep_focus)
+  conv => arg 4; rw [skipBelowX_err s0.sp 0 (by decide)]
+  wp_reach
+  intro hcl1
+  refine call_frame_budget_lscl (spec := decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)
+    (x := (s0.sp - 96#64, 0x8000000000000002#64, st))
+    (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ KindNoHeap 0x8000000000000002#64 ∧
+      FitsEnv M lim st DecodeErrorFromEnv)
+    (ret_pc := (blkPl_1).base + bv% (652)) hFromCall hcl1
+    (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+    (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+    (by simp only [arm64_norm])
+    (by simp only [decodeErrorFromBudgetSpecWithStack, arm64_norm]; rfl)
+    ⟨rfl, by decide, hfits_de⟩
+    (by sep_focus)
+    ?_
+  intro sm hpcm hrunm hspm hcsm _
+  apply SepWPp.of_sepWP_ret
+  simp only [decodeErrorFromBudgetSpecWithStack, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+  apply SepWP.exists_elim; intro evs
+  wp_pull_pures
+  have hevs_de : DecodeErrorFromEnv evs := by assumption
+  have hevs_sf := skipFieldEnv_of_decodeErrorFrom
+    (x := ⟨wt, tag, 0, bufRef, slot, ptr, bs⟩) hnone hevs_de
+  apply SepWP.fold (skipBelowX_err_entails s0.sp 0 (by decide)) (by sep_focus)
+  wp_steps_sync_pool (s0.readReg64 Reg.lr)
+  simp only [State.setMem_setMem]
+  wp_done
+
+set_option maxHeartbeats 800000 in
+theorem skipField_endGroup_placed_ok_x [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : LibsignalHooks}
+    (hFromCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 261)
+      (withLsCodeLoaded lsmpl (decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)))
+    (d : Nat) (hdepth : d + 1 < 2 ^ 32) :
+    subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (blkPl_1).base
+      (withLsCodeLoaded lsmpl (skipFieldSpecAtX A lim (d + 1) (fun x => x.wt = .endGroup))) := by
+  unfold withLsCodeLoaded
+  conv =>
+    arg 3
+    unfold skipFieldSpecAtX
+    simp only [sliceCursorAt, stackAt_skipFieldX _ (d + 1) hdepth,
+      sepExists_sepConj_left, sepExists_sepConj_right]
+  wpp_init x s0
+  rcases x with ⟨⟨wt, tag, depth, bufRef, slot, ptr, bs⟩, st⟩
+  dsimp only at *
+  have hcl0 : LibsignalCodeLoaded lsmpl s0.mem := by assumption
+  have hwt_eq : wt = .endGroup := by assumption
+  subst hwt_eq
+  have hdepth_eq : depth = d + 1 := by assumption
+  subst hdepth_eq
+  have hx0 : (s0.readReg64 (Reg.gpr 0#5)).setWidth 8 = BitVec.ofNat 8 WireType.endGroup.toNat := by assumption
+  have hx3 : (s0.readReg64 (Reg.gpr 3#5)).setWidth 32 = BitVec.ofNat 32 (d + 1) := by assumption
+  have hfits : FitsEnv M lim st (SkipFieldEnv ⟨.endGroup, tag, d + 1, bufRef, slot, ptr, bs⟩) := by assumption
+  have hcbz := cbz_depth_succ hx3 hdepth
+  have hw0 := w0_and_255_eq hx0
+  dsimp [WireType.toNat] at hw0
+  have hnone := skipField_succ_endGroup (2 * bs.length + 1) d tag bs
+  have hfits_de := fitsEnv_decodeErrorFrom_of_skipField_none
+    (x := ⟨.endGroup, tag, d + 1, bufRef, slot, ptr, bs⟩) hnone hfits
+  rw [hnone]
+  apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 261) hcl0
+  conv => arg 4; rw [memRegion_48_split (s0.sp - 96#64), bv_sub_add_lit s0.sp 96 8]
+  simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+  apply SepWP.exists_elim; intro v_err0
+  wp_steps_sync_pool (lsmpl.base 261)
+  simp only [State.setMem_setMem]
+  apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 bs.length)) (by sep_focus)
+  conv => arg 4; rw [skipBelowX_err s0.sp (d + 1) hdepth]
+  wp_reach
+  intro hcl1
+  refine call_frame_budget_lscl (spec := decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)
+    (x := (s0.sp - 96#64, 0x8000000000000009#64, st))
+    (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ KindNoHeap 0x8000000000000009#64 ∧
+      FitsEnv M lim st DecodeErrorFromEnv)
+    (ret_pc := (blkPl_1).base + bv% (652)) hFromCall hcl1
+    (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+    (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+    (by simp only [arm64_norm])
+    (by simp only [decodeErrorFromBudgetSpecWithStack, arm64_norm]; rfl)
+    ⟨rfl, by decide, hfits_de⟩
+    (by sep_focus)
+    ?_
+  intro sm hpcm hrunm hspm hcsm _
+  apply SepWPp.of_sepWP_ret
+  simp only [decodeErrorFromBudgetSpecWithStack, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+  apply SepWP.exists_elim; intro evs
+  wp_pull_pures
+  have hevs_de : DecodeErrorFromEnv evs := by assumption
+  have hevs_sf := skipFieldEnv_of_decodeErrorFrom
+    (x := ⟨.endGroup, tag, d + 1, bufRef, slot, ptr, bs⟩) hnone hevs_de
+  apply SepWP.fold (skipBelowX_err_entails s0.sp (d + 1) hdepth) (by sep_focus)
+  wp_steps_sync_pool (s0.readReg64 Reg.lr)
+  simp only [State.setMem_setMem]
+  wp_done
+
+set_option maxHeartbeats 800000 in
+theorem skipField_sixtyFourBit_placed_ok_x [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : LibsignalHooks}
+    (hFromCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 261)
+      (withLsCodeLoaded lsmpl (decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)))
+    (d : Nat) (hdepth : d + 1 < 2 ^ 32) :
+    subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (blkPl_1).base
+      (withLsCodeLoaded lsmpl (skipFieldSpecAtX A lim (d + 1) (fun x => x.wt = .sixtyFourBit))) := by
+  unfold withLsCodeLoaded
+  conv =>
+    arg 3
+    unfold skipFieldSpecAtX
+    simp only [sliceCursorAt, stackAt_skipFieldX _ (d + 1) hdepth,
+      sepExists_sepConj_left, sepExists_sepConj_right]
+  wpp_init x s0
+  rcases x with ⟨⟨wt, tag, depth, bufRef, slot, ptr, bs⟩, st⟩
+  dsimp only at *
+  have hcl0 : LibsignalCodeLoaded lsmpl s0.mem := by assumption
+  have hwt_eq : wt = .sixtyFourBit := by assumption
+  subst hwt_eq
+  have hdepth_eq : depth = d + 1 := by assumption
+  subst hdepth_eq
+  have hx0 : (s0.readReg64 (Reg.gpr 0#5)).setWidth 8 = BitVec.ofNat 8 WireType.sixtyFourBit.toNat := by assumption
+  have hx3 : (s0.readReg64 (Reg.gpr 3#5)).setWidth 32 = BitVec.ofNat 32 (d + 1) := by assumption
+  have h : bs.length < 2 ^ 63 := by assumption
+  have hfits : FitsEnv M lim st (SkipFieldEnv ⟨.sixtyFourBit, tag, d + 1, bufRef, slot, ptr, bs⟩) := by assumption
+  have hcbz := cbz_depth_succ hx3 hdepth
+  have hw0 := w0_and_255_eq hx0
+  dsimp [WireType.toNat] at hw0
+  have hpool_nil : A.pool lim st = A.pool lim (M.stepEvents ([] : List AllocEvent) st) := rfl
+  by_cases hlt : bs.length < 8
+  · have hule := ule_len_of_lt (n := 8#64) hlt h
+    have hnone : skipField (2 * bs.length + 2) (d + 1) tag .sixtyFourBit bs = none := by
+      rw [skipField_succ_sixtyFourBit]; simp [skipBytes, hlt]
+    have hfits_de := fitsEnv_decodeErrorFrom_of_skipField_none hnone hfits
+    rw [hnone]
+    apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 261) hcl0
+    conv => arg 4; rw [memRegion_48_split (s0.sp - 96#64), bv_sub_add_lit s0.sp 96 8]
+    simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+    apply SepWP.exists_elim; intro v_err0
+    wp_steps_sync_pool (lsmpl.base 261)
+    simp only [State.setMem_setMem]
+    apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 bs.length)) (by sep_focus)
+    conv => arg 4; rw [skipBelowX_err s0.sp (d + 1) hdepth]
+    wp_reach
+    intro hcl1
+    refine call_frame_budget_lscl (spec := decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)
+      (x := (s0.sp - 96#64, 0x8000000000000007#64, st))
+      (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ KindNoHeap 0x8000000000000007#64 ∧
+        FitsEnv M lim st DecodeErrorFromEnv)
+      (ret_pc := (blkPl_1).base + bv% (652)) hFromCall hcl1
+      (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+      (by simp only [arm64_norm])
+      (by simp only [decodeErrorFromBudgetSpecWithStack, arm64_norm]; rfl)
+      ⟨rfl, by decide, hfits_de⟩
+      (by sep_focus)
+      ?_
+    intro sm hpcm hrunm hspm hcsm _
+    apply SepWPp.of_sepWP_ret
+    simp only [decodeErrorFromBudgetSpecWithStack, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+    apply SepWP.exists_elim; intro evs
+    wp_pull_pures
+    have hevs_de : DecodeErrorFromEnv evs := by assumption
+    have hevs_sf := skipFieldEnv_of_decodeErrorFrom
+      (x := ⟨.sixtyFourBit, tag, d + 1, bufRef, slot, ptr, bs⟩) hnone hevs_de
+    apply SepWP.fold (skipBelowX_err_entails s0.sp (d + 1) hdepth) (by sep_focus)
+    wp_steps_sync_pool (s0.readReg64 Reg.lr)
+    simp only [State.setMem_setMem]
+    wp_done
+  · have hule := ule_len_of_ge (n := 8#64) hlt h
+    have hsub := bv_len_sub_skip (n := 8#64) hlt
+    have hadd := bv_ptr_add_skip_top (ptr := ptr) (n := 8#64) hlt
+    have hsome : skipField (2 * bs.length + 2) (d + 1) tag .sixtyFourBit bs = some (bs.drop 8) := by
+      rw [skipField_succ_sixtyFourBit]; simp [skipBytes, hlt]
+    have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.sixtyFourBit, tag, d + 1, bufRef, slot, ptr, bs⟩) hsome
+    rw [hsome]
+    simp only [sliceCursorAfter]
+    apply SepWPp.of_sepWP_ret
+    wp_steps_sync_pool (s0.readReg64 Reg.lr)
+    simp only [State.setMem_setMem]
+    conv => arg 4; rw [hpool_nil]
+    wp_done
+
+set_option maxHeartbeats 800000 in
+theorem skipField_thirtyTwoBit_placed_ok_x [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : LibsignalHooks}
+    (hFromCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 261)
+      (withLsCodeLoaded lsmpl (decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)))
+    (d : Nat) (hdepth : d + 1 < 2 ^ 32) :
+    subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (blkPl_1).base
+      (withLsCodeLoaded lsmpl (skipFieldSpecAtX A lim (d + 1) (fun x => x.wt = .thirtyTwoBit))) := by
+  unfold withLsCodeLoaded
+  conv =>
+    arg 3
+    unfold skipFieldSpecAtX
+    simp only [sliceCursorAt, stackAt_skipFieldX _ (d + 1) hdepth,
+      sepExists_sepConj_left, sepExists_sepConj_right]
+  wpp_init x s0
+  rcases x with ⟨⟨wt, tag, depth, bufRef, slot, ptr, bs⟩, st⟩
+  dsimp only at *
+  have hcl0 : LibsignalCodeLoaded lsmpl s0.mem := by assumption
+  have hwt_eq : wt = .thirtyTwoBit := by assumption
+  subst hwt_eq
+  have hdepth_eq : depth = d + 1 := by assumption
+  subst hdepth_eq
+  have hx0 : (s0.readReg64 (Reg.gpr 0#5)).setWidth 8 = BitVec.ofNat 8 WireType.thirtyTwoBit.toNat := by assumption
+  have hx3 : (s0.readReg64 (Reg.gpr 3#5)).setWidth 32 = BitVec.ofNat 32 (d + 1) := by assumption
+  have h : bs.length < 2 ^ 63 := by assumption
+  have hfits : FitsEnv M lim st (SkipFieldEnv ⟨.thirtyTwoBit, tag, d + 1, bufRef, slot, ptr, bs⟩) := by assumption
+  have hcbz := cbz_depth_succ hx3 hdepth
+  have hw0 := w0_and_255_eq hx0
+  dsimp [WireType.toNat] at hw0
+  have hpool_nil : A.pool lim st = A.pool lim (M.stepEvents ([] : List AllocEvent) st) := rfl
+  by_cases hlt : bs.length < 4
+  · have hule := ule_len_of_lt (n := 4#64) hlt h
+    have hnone : skipField (2 * bs.length + 2) (d + 1) tag .thirtyTwoBit bs = none := by
+      rw [skipField_succ_thirtyTwoBit]; simp [skipBytes, hlt]
+    have hfits_de := fitsEnv_decodeErrorFrom_of_skipField_none hnone hfits
+    rw [hnone]
+    apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 261) hcl0
+    conv => arg 4; rw [memRegion_48_split (s0.sp - 96#64), bv_sub_add_lit s0.sp 96 8]
+    simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+    apply SepWP.exists_elim; intro v_err0
+    wp_steps_sync_pool (lsmpl.base 261)
+    simp only [State.setMem_setMem]
+    apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 bs.length)) (by sep_focus)
+    conv => arg 4; rw [skipBelowX_err s0.sp (d + 1) hdepth]
+    wp_reach
+    intro hcl1
+    refine call_frame_budget_lscl (spec := decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)
+      (x := (s0.sp - 96#64, 0x8000000000000007#64, st))
+      (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ KindNoHeap 0x8000000000000007#64 ∧
+        FitsEnv M lim st DecodeErrorFromEnv)
+      (ret_pc := (blkPl_1).base + bv% (652)) hFromCall hcl1
+      (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+      (by simp only [arm64_norm])
+      (by simp only [decodeErrorFromBudgetSpecWithStack, arm64_norm]; rfl)
+      ⟨rfl, by decide, hfits_de⟩
+      (by sep_focus)
+      ?_
+    intro sm hpcm hrunm hspm hcsm _
+    apply SepWPp.of_sepWP_ret
+    simp only [decodeErrorFromBudgetSpecWithStack, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+    apply SepWP.exists_elim; intro evs
+    wp_pull_pures
+    have hevs_de : DecodeErrorFromEnv evs := by assumption
+    have hevs_sf := skipFieldEnv_of_decodeErrorFrom
+      (x := ⟨.thirtyTwoBit, tag, d + 1, bufRef, slot, ptr, bs⟩) hnone hevs_de
+    apply SepWP.fold (skipBelowX_err_entails s0.sp (d + 1) hdepth) (by sep_focus)
+    wp_steps_sync_pool (s0.readReg64 Reg.lr)
+    simp only [State.setMem_setMem]
+    wp_done
+  · have hule := ule_len_of_ge (n := 4#64) hlt h
+    have hsub := bv_len_sub_skip (n := 4#64) hlt
+    have hadd := bv_ptr_add_skip_top (ptr := ptr) (n := 4#64) hlt
+    have hsome : skipField (2 * bs.length + 2) (d + 1) tag .thirtyTwoBit bs = some (bs.drop 4) := by
+      rw [skipField_succ_thirtyTwoBit]; simp [skipBytes, hlt]
+    have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.thirtyTwoBit, tag, d + 1, bufRef, slot, ptr, bs⟩) hsome
+    rw [hsome]
+    simp only [sliceCursorAfter]
+    apply SepWPp.of_sepWP_ret
+    wp_steps_sync_pool (s0.readReg64 Reg.lr)
+    simp only [State.setMem_setMem]
+    conv => arg 4; rw [hpool_nil]
+    wp_done
+
+set_option maxHeartbeats 1600000 in
+theorem skipField_varint_placed_ok_x [LibsignalPlacement]
+    {M : AllocCostModel} {A : RustCliAllocBudget M} {lim : BudgetLimits}
+    {H : LibsignalHooks}
+    (hFromCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 261)
+      (withLsCodeLoaded lsmpl (decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)))
+    (hSlowCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 293)
+      (withLsCodeLoaded lsmpl (decodeVarintSlowSpecX A lim)))
+    (hSliceCall : subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (lsmpl.base 76)
+      (withLsCodeLoaded lsmpl (decodeVarintSliceSpecX A lim)))
+    (d : Nat) (hdepth : d + 1 < 2 ^ 32) :
+    subroutine_ok ((blkPC_1).rebase (blkPl_1).base H)
+      (blkPl_1).base
+      (withLsCodeLoaded lsmpl (skipFieldSpecAtX A lim (d + 1) (fun x => x.wt = .varint))) := by
+  unfold withLsCodeLoaded
+  conv =>
+    arg 3
+    unfold skipFieldSpecAtX
+    simp only [sliceCursorAt, stackAt_skipFieldX _ (d + 1) hdepth,
+      sepExists_sepConj_left, sepExists_sepConj_right]
+  wpp_init x s0
+  rcases x with ⟨⟨wt, tag, depth, bufRef, slot, ptr, bs⟩, st⟩
+  dsimp only at *
+  have hcl0 : LibsignalCodeLoaded lsmpl s0.mem := by assumption
+  have hwt_eq : wt = .varint := by assumption
+  subst hwt_eq
+  have hdepth_eq : depth = d + 1 := by assumption
+  subst hdepth_eq
+  have hx0 : (s0.readReg64 (Reg.gpr 0#5)).setWidth 8 = BitVec.ofNat 8 WireType.varint.toNat := by assumption
+  have hx3 : (s0.readReg64 (Reg.gpr 3#5)).setWidth 32 = BitVec.ofNat 32 (d + 1) := by assumption
+  have h : bs.length < 2 ^ 63 := by assumption
+  have hfits : FitsEnv M lim st (SkipFieldEnv ⟨.varint, tag, d + 1, bufRef, slot, ptr, bs⟩) := by assumption
+  have hcbz := cbz_depth_succ hx3 hdepth
+  have hw0 := w0_and_255_eq hx0
+  dsimp [WireType.toNat] at hw0
+  have hpool_nil : A.pool lim st = A.pool lim (M.stepEvents ([] : List AllocEvent) st) := rfl
+  cases bs with
+  | nil =>
+    have hnone : skipField (2 * ([] : List (BitVec 8)).length + 2) (d + 1) tag .varint [] = none := by
+      rw [skipField_succ_varint]; simp [decodeVarint, decodeVarintAux]
+    have hfits_de := fitsEnv_decodeErrorFrom_of_skipField_none hnone hfits
+    rw [hnone]
+    apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 261) hcl0
+    conv => arg 4; rw [memRegion_48_split (s0.sp - 96#64), bv_sub_add_lit s0.sp 96 8]
+    simp only [sepExists_sepConj_left, sepExists_sepConj_right]
+    apply SepWP.exists_elim; intro v_err0
+    wp_steps_sync_pool (lsmpl.base 261)
+    simp only [State.setMem_setMem]
+    apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr 0#64) (by sep_focus)
+    conv => arg 4; rw [skipBelowX_err s0.sp (d + 1) hdepth]
+    wp_reach
+    intro hcl1
+    refine call_frame_budget_lscl (spec := decodeErrorFromBudgetSpecWithStack M A lim decodeErrorHookStackX)
+      (x := (s0.sp - 96#64, 0x8000000000000001#64, st))
+      (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ KindNoHeap 0x8000000000000001#64 ∧
+        FitsEnv M lim st DecodeErrorFromEnv)
+      (ret_pc := (blkPl_1).base + bv% (652)) hFromCall hcl1
+      (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+      (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+      (by simp only [arm64_norm])
+      (by simp only [decodeErrorFromBudgetSpecWithStack, arm64_norm]; rfl)
+      ⟨rfl, by decide, hfits_de⟩
+      (by sep_focus)
+      ?_
+    intro sm hpcm hrunm hspm hcsm _
+    apply SepWPp.of_sepWP_ret
+    simp only [decodeErrorFromBudgetSpecWithStack, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+    apply SepWP.exists_elim; intro evs
+    wp_pull_pures
+    have hevs_de : DecodeErrorFromEnv evs := by assumption
+    have hevs_sf := skipFieldEnv_of_decodeErrorFrom
+      (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, []⟩) hnone hevs_de
+    apply SepWP.fold (skipBelowX_err_entails s0.sp (d + 1) hdepth) (by sep_focus)
+    wp_steps_sync_pool (s0.readReg64 Reg.lr)
+    simp only [State.setMem_setMem]
+    wp_done
+  | cons b0 bs1 =>
+    have hcbz_len := cbz_len_cons_false h
+    have himp_none : decodeVarint (b0 :: bs1) = none →
+        skipField (2 * (b0 :: bs1).length + 2) (d + 1) tag .varint (b0 :: bs1) = none := by
+      intro hd; rw [skipField_succ_varint, hd]; rfl
+    have hfits_sl := fitsEnv_varintSlice_of_skipField himp_none hfits
+    have hfits_slw := fitsEnv_varintSlow_of_skipField himp_none hfits
+    by_cases hb0 : b0 ≤ 0x7f#8
+    · have hbit0 := getLsbD_7_of_le hb0
+      have hsome : skipField (2 * (b0 :: bs1).length + 2) (d + 1) tag .varint (b0 :: bs1) = some bs1 := by
+        rw [skipField_succ_varint, decodeVarint_1 bs1 hb0]; rfl
+      have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hsome
+      rw [hsome]
+      apply SepWPp.of_sepWP_ret
+      conv => arg 4; rw [pointsToBytes_cons]
+      wp_steps_sync_pool (s0.readReg64 Reg.lr)
+      simp only [State.setMem_setMem]
+      apply SepWP.fold (Entails.of_eq (pointsToBytes_cons ptr b0 bs1).symm) (by sep_focus)
+      apply SepWP.fold (Entails.of_eq (congrArg ((slot + 8#64) ↦₆₄ ·) (len_cons_sub_one b0 bs1))) (by sep_focus)
+      conv => arg 4; rw [hpool_nil]
+      simp only [sliceCursorAfter, List.length_cons, Nat.add_sub_cancel_left]
+      wp_done
+    · have hbit0 := getLsbD_7_of_gt hb0
+      have hlen_toNat : (BitVec.ofNat 64 (b0 :: bs1).length).toNat = (b0 :: bs1).length := by
+        rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+      apply SepWPp.of_sepWP_lscl (mid := (blkPl_1).base + bv% (392)) hcl0
+      conv => arg 4; rw [pointsToBytes_cons]
+      wp_steps_sync_pool ((blkPl_1).base + bv% (392))
+      simp only [State.setMem_setMem]
+      wp_reach
+      intro hcl1
+      by_cases h11 : 11 ≤ (b0 :: bs1).length
+      · have hhi := ult_10_of_ge_11 h11 h
+        have hpre_slice : VarintSlicePre (b0 :: bs1) := Or.inl h11
+        apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 76) hcl1
+        conv => arg 4; rw [memRegion_48_skipSlice s0.sp, skipBelowX_leaf s0.sp (d + 1) hdepth]
+        wp_steps_sync_pool (lsmpl.base 76)
+        simp only [State.setMem_setMem]
+        wp_reach
+        intro hcl2
+        refine call_frame_budget_lscl (spec := decodeVarintSliceSpecX A lim)
+          (x := (⟨s0.sp - 96#64, ptr, b0 :: bs1⟩, st))
+          (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ ptr = ptr ∧
+            (BitVec.ofNat 64 (b0 :: bs1).length).toNat = (b0 :: bs1).length ∧
+            (b0 :: bs1).length < 2 ^ 63 ∧ VarintSlicePre (b0 :: bs1) ∧
+            FitsEnv M lim st (DecodeVarintSliceEnv (b0 :: bs1)))
+          (ret_pc := (blkPl_1).base + bv% (416)) hSliceCall hcl2
+          (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+          (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+          (by simp only [arm64_norm])
+          (by simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, arm64_norm]; rfl)
+          ⟨rfl, rfl, hlen_toNat, h, hpre_slice, hfits_sl⟩
+          (by sep_focus)
+          ?_
+        intro sm hpcm hrunm hspm hcsm _
+        simp only [CalleeSavedPreserved] at hcsm
+        obtain ⟨hx19, hx20, hx21, hx22, hx23, hx24, hx25, hx26, hx27, hx28, hfp, hvregs⟩ := hcsm
+        simp (config := { decide := true }) only [arm64_norm] at hpcm hspm hx19 hx20 hx21 hx22 hx23 hx24 hx25 hx26 hx27 hx28 hfp hvregs
+        apply SepWPp.of_sepWP_ret
+        cases hd : decodeVarint (b0 :: bs1) with
+        | none =>
+          have hnone := himp_none hd
+          rw [hnone]
+          simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, hd, varintSliceResultAt,
+            sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+          apply SepWP.exists_elim; intro evs
+          apply SepWP.exists_elim; intro e_err
+          wp_pull_pures
+          have hevs_sl : DecodeVarintSliceEnv (b0 :: bs1) evs := by assumption
+          have hevs_sf := skipFieldEnv_of_varintSlice_none
+            (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hd hnone hevs_sl
+          apply SepWP.fold (skipBelowX_leaf_entails s0.sp (d + 1) hdepth) (by sep_focus)
+          wp_steps_sync_pool (s0.readReg64 Reg.lr)
+          simp only [State.setMem_setMem]
+          apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 (b0 :: bs1).length)) (by sep_focus)
+          apply SepWP.fold (skipSliceErr_entails_memRegion48 s0.sp 1#64 e_err) (by sep_focus)
+          wp_done
+        | some p =>
+          rcases p with ⟨v, rest⟩
+          have hsome : skipField (2 * (b0 :: bs1).length + 2) (d + 1) tag .varint (b0 :: bs1) = some rest := by
+            rw [skipField_succ_varint, hd]; rfl
+          rw [hsome]
+          have hcc := len_ult_consumed_false (rest := rest) h
+          have hsub_len := bv_len_sub_consumed hd
+          simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, hd, varintSliceResultAt,
+            sliceCursorAfter, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+          apply SepWP.exists_elim; intro evs
+          wp_pull_pures
+          have hevs_sl : DecodeVarintSliceEnv (b0 :: bs1) evs := by assumption
+          have hevs0 := varintSliceEnv_some_eq_nil hd hevs_sl
+          subst hevs0
+          have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hsome
+          apply SepWP.fold (skipBelowX_leaf_entails s0.sp (d + 1) hdepth) (by sep_focus)
+          wp_steps_sync_pool (s0.readReg64 Reg.lr)
+          simp only [State.setMem_setMem]
+          apply SepWP.fold (skipSliceOk_entails_memRegion48 s0.sp 0#64 v (BitVec.ofNat 64 ((b0 :: bs1).length - rest.length))) (by sep_focus)
+          wp_done
+      · have hhi := ult_10_of_lt_11 h11 h
+        have hne_cons : b0 :: bs1 ≠ [] := List.cons_ne_nil b0 bs1
+        apply SepWPp.of_sepWP_lscl (mid := (blkPl_1).base + bv% (404)) hcl1
+        apply SepWP.fold (Entails.of_eq (pointsToBytes_cons ptr b0 bs1).symm) (by sep_focus)
+        conv => arg 4; rw [pointsToBytes_split_last ptr (b0 :: bs1) hne_cons h]
+        wp_steps_sync_pool ((blkPl_1).base + bv% (404))
+        simp only [State.setMem_setMem]
+        apply SepWP.fold (Entails.of_eq (pointsToBytes_split_last ptr (b0 :: bs1) hne_cons h).symm) (by sep_focus)
+        wp_reach
+        intro hcl2
+        by_cases hlast : ((b0 :: bs1).getLast hne_cons).toNat ≤ 0x7F
+        · have hbit_last := getLsbD_7_of_le hlast
+          have hpre_slice : VarintSlicePre (b0 :: bs1) := Or.inr ⟨hne_cons, hlast⟩
+          apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 76) hcl2
+          conv => arg 4; rw [pointsToBytes_cons, memRegion_48_skipSlice s0.sp, skipBelowX_leaf s0.sp (d + 1) hdepth]
+          wp_steps_sync_pool (lsmpl.base 76)
+          simp only [State.setMem_setMem]
+          wp_reach
+          intro hcl3
+          refine call_frame_budget_lscl (spec := decodeVarintSliceSpecX A lim)
+            (x := (⟨s0.sp - 96#64, ptr, b0 :: bs1⟩, st))
+            (φ := s0.sp - 96#64 = s0.sp - 96#64 ∧ ptr = ptr ∧
+              (BitVec.ofNat 64 (b0 :: bs1).length).toNat = (b0 :: bs1).length ∧
+              (b0 :: bs1).length < 2 ^ 63 ∧ VarintSlicePre (b0 :: bs1) ∧
+              FitsEnv M lim st (DecodeVarintSliceEnv (b0 :: bs1)))
+            (ret_pc := (blkPl_1).base + bv% (416)) hSliceCall hcl3
+            (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+            (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+            (by simp only [arm64_norm])
+            (by simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, arm64_norm]; rfl)
+            ⟨rfl, rfl, hlen_toNat, h, hpre_slice, hfits_sl⟩
+            (by sep_focus)
+            ?_
+          intro sm hpcm hrunm hspm hcsm _
+          simp only [CalleeSavedPreserved] at hcsm
+          obtain ⟨hx19, hx20, hx21, hx22, hx23, hx24, hx25, hx26, hx27, hx28, hfp, hvregs⟩ := hcsm
+          simp (config := { decide := true }) only [arm64_norm] at hpcm hspm hx19 hx20 hx21 hx22 hx23 hx24 hx25 hx26 hx27 hx28 hfp hvregs
+          apply SepWPp.of_sepWP_ret
+          cases hd : decodeVarint (b0 :: bs1) with
+          | none =>
+            have hnone := himp_none hd
+            rw [hnone]
+            simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, hd, varintSliceResultAt,
+              sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+            apply SepWP.exists_elim; intro evs
+            apply SepWP.exists_elim; intro e_err
+            wp_pull_pures
+            have hevs_sl : DecodeVarintSliceEnv (b0 :: bs1) evs := by assumption
+            have hevs_sf := skipFieldEnv_of_varintSlice_none
+              (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hd hnone hevs_sl
+            apply SepWP.fold (skipBelowX_leaf_entails s0.sp (d + 1) hdepth) (by sep_focus)
+            wp_steps_sync_pool (s0.readReg64 Reg.lr)
+            simp only [State.setMem_setMem]
+            apply SepWP.fold (pointsTo64_pair_entails_memRegion16 slot ptr (BitVec.ofNat 64 (b0 :: bs1).length)) (by sep_focus)
+            apply SepWP.fold (skipSliceErr_entails_memRegion48 s0.sp 1#64 e_err) (by sep_focus)
+            wp_done
+          | some p =>
+            rcases p with ⟨v, rest⟩
+            have hsome : skipField (2 * (b0 :: bs1).length + 2) (d + 1) tag .varint (b0 :: bs1) = some rest := by
+              rw [skipField_succ_varint, hd]; rfl
+            rw [hsome]
+            have hcc := len_ult_consumed_false (rest := rest) h
+            have hsub_len := bv_len_sub_consumed hd
+            simp only [decodeVarintSliceSpecX, decodeVarintSliceSpecGen, hd, varintSliceResultAt,
+              sliceCursorAfter, sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+            apply SepWP.exists_elim; intro evs
+            wp_pull_pures
+            have hevs_sl : DecodeVarintSliceEnv (b0 :: bs1) evs := by assumption
+            have hevs0 := varintSliceEnv_some_eq_nil hd hevs_sl
+            subst hevs0
+            have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hsome
+            apply SepWP.fold (skipBelowX_leaf_entails s0.sp (d + 1) hdepth) (by sep_focus)
+            wp_steps_sync_pool (s0.readReg64 Reg.lr)
+            simp only [State.setMem_setMem]
+            apply SepWP.fold (skipSliceOk_entails_memRegion48 s0.sp 0#64 v (BitVec.ofNat 64 ((b0 :: bs1).length - rest.length))) (by sep_focus)
+            wp_done
+        · have hbit_last := getLsbD_7_of_gt hlast
+          apply SepWPp.of_sepWP_lscl (mid := lsmpl.base 293) hcl2
+          wp_steps_sync_pool (lsmpl.base 293)
+          simp only [State.setMem_setMem]
+          conv => arg 4; rw [skipBelowX_slow s0.sp (d + 1) hdepth]
+          wp_reach
+          intro hcl3
+          refine call_frame_budget_lscl (spec := decodeVarintSlowSpecX A lim)
+            (x := (⟨bufRef, slot, ptr, b0 :: bs1⟩, st))
+            (φ := bufRef = bufRef ∧ (b0 :: bs1).length < 2 ^ 63 ∧
+              FitsEnv M lim st (DecodeVarintSlowEnv (b0 :: bs1)))
+            (ret_pc := (blkPl_1).base + bv% (732)) hSlowCall hcl3
+            (by simp only [arm64_norm]) (by simp only [arm64_norm, hrun])
+            (by simp only [State.spAligned, arm64_norm]; exact hsp_align)
+            (by simp only [arm64_norm])
+            (by simp only [decodeVarintSlowSpecX, decodeVarintSlowSpecGen, arm64_norm]; rfl)
+            ⟨rfl, h, hfits_slw⟩
+            (by simp only [sliceCursorAt]; sep_focus)
+            ?_
+          intro sm hpcm hrunm hspm hcsm _
+          simp only [CalleeSavedPreserved] at hcsm
+          obtain ⟨hx19, hx20, hx21, hx22, hx23, hx24, hx25, hx26, hx27, hx28, hfp, hvregs⟩ := hcsm
+          simp (config := { decide := true }) only [arm64_norm] at hpcm hspm hx19 hx20 hx21 hx22 hx23 hx24 hx25 hx26 hx27 hx28 hfp hvregs
+          apply SepWPp.of_sepWP_ret
+          cases hd : decodeVarint (b0 :: bs1) with
+          | none =>
+            have hnone := himp_none hd
+            rw [hnone]
+            simp only [decodeVarintSlowSpecX, decodeVarintSlowSpecGen, hd,
+              sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+            apply SepWP.exists_elim; intro evs
+            wp_pull_pures
+            have hevs_slw : DecodeVarintSlowEnv (b0 :: bs1) evs := by assumption
+            have hevs_sf := skipFieldEnv_of_varintSlow_none
+              (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hd hnone hevs_slw
+            apply SepWP.fold (skipBelowX_slow_entails s0.sp (d + 1) hdepth) (by sep_focus)
+            wp_steps_sync_pool (s0.readReg64 Reg.lr)
+            simp only [State.setMem_setMem]
+            wp_done
+          | some p =>
+            rcases p with ⟨v, rest⟩
+            have hsome : skipField (2 * (b0 :: bs1).length + 2) (d + 1) tag .varint (b0 :: bs1) = some rest := by
+              rw [skipField_succ_varint, hd]; rfl
+            rw [hsome]
+            simp only [decodeVarintSlowSpecX, decodeVarintSlowSpecGen, hd, sliceCursorAfter,
+              sepExists_sepConj_left, sepExists_sepConj_right, arm64_norm]
+            apply SepWP.exists_elim; intro evs
+            wp_pull_pures
+            have hevs_slw : DecodeVarintSlowEnv (b0 :: bs1) evs := by assumption
+            have hevs0 := varintSlowEnv_some_eq_nil hd hevs_slw
+            subst hevs0
+            have hevs_sf := skipFieldEnv_nil_of_some (x := ⟨.varint, tag, d + 1, bufRef, slot, ptr, b0 :: bs1⟩) hsome
+            apply SepWP.fold (skipBelowX_slow_entails s0.sp (d + 1) hdepth) (by sep_focus)
+            wp_steps_sync_pool (s0.readReg64 Reg.lr)
+            simp only [State.setMem_setMem]
+            wp_done
+
+end
+
+end LibsignalBinary.Proofs.TripleRatchet.Prost.SkipField.BranchesXBudgetAux

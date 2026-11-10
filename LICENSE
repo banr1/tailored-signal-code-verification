@@ -1,0 +1,9 @@
+The files located at third_party/hashbrown-0.17.1 are licensed under the following terms: https://opensource.org/license/mit
+
+The file located at arm64-semantics/CaseStudies/Hashbrown/Implementation/hashbrown_cli.elf contains compiled code from hashbrown 0.17.1, the Rust standard library 1.98.1 and musl 1.2.5, which are licensed under the following terms: https://opensource.org/license/mit; license texts: third_party/hashbrown-0.17.1/LICENSE-MIT, third_party/hashbrown-0.17.1/LICENSE-APACHE, https://github.com/rust-lang/rust/blob/1.98.1/LICENSE-MIT, https://github.com/rust-lang/rust/blob/1.98.1/LICENSE-APACHE, https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT?h=v1.2.5
+
+The files located at third_party/libsignal that contain code copied from libsignal are licensed under the following terms: https://opensource.org/license/agpl-v3 (each file states its license in its header comment; see third_party/libsignal/README.md)
+
+The files located at third_party/libsignal/libsignal-session/cli-elf/rdl_shim.S, third_party/libsignal/libsignal-session/cli-elf/stock/rdl_shim.S and third_party/libsignal/libsignal-session/cli-elf/signal_session_io.S contain code from the Rust standard library 1.98.1, which is licensed under the following terms: https://opensource.org/license/mit; license texts: https://github.com/rust-lang/rust/blob/1.98.1/LICENSE-MIT, https://github.com/rust-lang/rust/blob/1.98.1/LICENSE-APACHE
+
+The files located at third_party/libsignal/libsignal-session/cli-elf/string-include contain code from musl 1.2.5, which is licensed under the following terms: https://opensource.org/license/mit; license text: https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT?h=v1.2.5

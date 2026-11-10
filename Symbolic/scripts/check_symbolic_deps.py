@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Checks import rules for the `Symbolic/` and `LibsignalBinary/` Lean trees.
+
+Usage (from any directory): Symbolic/scripts/check_symbolic_deps.py [--root REPO]
+
+Scans non-ignored `.lean` files outside `arm64-semantics/`, `.GeneratedLean/`, and
+`Symbolic/docs/` (except `lakefile.lean`), plus any materialized checkpoint files under
+`Symbolic/BugInjection/Disproofs/Impl/*/Call<k>/`. A module is local if its first component is a
+top-level repository directory or file; all other modules are treated as external packages.
+
+1. `Symbolic.*` imports only `Symbolic.*`, `LibsignalBinary.*`, `GeneratedLean.*`, and external
+   packages.
+2. `LibsignalBinary.*` imports only `LibsignalBinary.*`, `GeneratedLean.*`, and external packages
+   (never `Symbolic.*`).
+3. Modules outside `Symbolic/` do not import `Symbolic.*`, except `comparator/` (`COMPARATOR_DIRS`).
+4. The local import closure of `STATEMENT_ROOTS` contains no computational or CryptoGames module
+   (`CRYPTO_GAMES`).
+5. The local import closure of `HEADLINE_ROOTS` contains no proof, test, bug-injection, bridge,
+   theorem, spec-audit, or computational module (`HEADLINE_FORBIDDEN`, or any `Proofs`/`Tests`
+   component).
+6. `Symbolic/Theorems/*.lean` modules do not `public import` proof, test, bug-injection, or bridge
+   modules (`THEOREM_PUBLIC_FORBIDDEN`, or any `Proofs` component), and
+   `comparator/ComparatorChallenge/Symbolic/*.lean` modules do not import proof, test,
+   bug-injection, bridge, theorem, or computational modules.
+
+Rules 1 and 2 also report local `Symbolic.*` and `LibsignalBinary.*` imports with no source file.
+Exits with status 1 if any rule is violated. Requires only Python 3 (and `git` in a worktree).
+"""
+import argparse
+import collections
+import json
+import os
+import re
+import subprocess
+import sys
+
+EXCLUDE = ("arm64-semantics/", ".GeneratedLean/", "Symbolic/docs/")
+# Comparator challenge and solution tree, exempt from rule 3.
+COMPARATOR_DIRS = ("comparator/",)
+IGNORE_DIRS = frozenset({".git", ".lake", "build", "target", "vendor", ".GeneratedLean"})
+SYMBOLIC = "Symbolic"
+BINARY = "LibsignalBinary"
+GENERATED = "GeneratedLean"
+# Trusted statement roots of the machine-free symbolic chain (rule 4).
+STATEMENT_ROOTS = (
+    # Symbolic protocol models and security queries.
+    "Symbolic.Specifications.Model.MsgKeys",
+    "Symbolic.Specifications.Model.TripleRatchet",
+    "Symbolic.Specifications.Model.PQXDH",
+    "Symbolic.Specifications.Model.Composed",
+    "Symbolic.Specifications.Security.Model",
+    # Concrete extern interpretation laws.
+    "Symbolic.Specifications.Concrete.ExternInterpretation",
+    # CLI refinement statement. `ElfBinding.lean`, `Security/Binary.lean`, and
+    # `RefinementPreservation.lean` are checked under `HEADLINE_ROOTS` (rule 5) instead because
+    # `HooksMatchInterpretation` imports `LibsignalBinary.Specifications.CryptoGames`;
+    # `machine_free_check.py` checks constant-level machine-freedom of `SignalSessionSecureFor`
+    # and `CompRefinementPreservationCli`.
+    "Symbolic.Specifications.Refinement.Statement",
+    # Hardware-trace attacker and security queries.
+    "Symbolic.Specifications.Security.AsmSecure",
+)
+# Computational and CryptoGames module prefixes forbidden in `STATEMENT_ROOTS` closures.
+CRYPTO_GAMES = ("Computational", "LibsignalBinary.Specifications.CryptoGames",
+                "LibsignalBinary.Proofs.CryptoGames")
+# Binary-level headline specification roots (rule 5). `LibsignalBinary.Specifications.CryptoGames`
+# is permitted here because `HooksMatchInterpretation` in `ElfBinding.lean` references CryptoGames
+# primitive definitions (`aesCbcEncrypt`, `bytesToKey32`, `bytesToBlock`).
+HEADLINE_ROOTS = (
+    "Symbolic.Specifications.Security.Binary",
+    "Symbolic.Specifications.Refinement.ElfBinding",
+    "Symbolic.Specifications.Refinement.RefinementPreservation",
+    "LibsignalBinary.Specifications.SignalSession.CliElf",
+)
+HEADLINE_FORBIDDEN = (
+    "Symbolic.Proofs",
+    "Symbolic.Tests",
+    "Symbolic.BugInjection",
+    "Symbolic.DYBridge",
+    "Symbolic.Theorems",
+    "LibsignalBinary.Proofs",
+    "LibsignalBinary.SpecAudit",
+    "Computational",
+)
+THEOREM_PUBLIC_FORBIDDEN = (
+    "Symbolic.Proofs",
+    "Symbolic.Tests",
+    "Symbolic.BugInjection",
+    "Symbolic.DYBridge",
+    "LibsignalBinary.Proofs",
+    "Computational.Proofs",
+)
+# Gitignored per-call checkpoint directories generated by `scripts/bug_injection.py gen-ckpt`.
+# When `Call<k>/` does not exist on disk, rule 1 allows missing source files only for the
+# `{Call<k>.C<name>, Call<k>.Ckpt<dst>}` modules listed in `ckpt_chunk_plan.json` when imported
+# within that same `Call<k>`. Once `Call<k>/` exists (even if empty or partial), all planned
+# files must exist and `lean_files()` includes `Call<k>/*.lean` in rules 1-6.
+GENERATED_CKPT_CALL_PARENTS = (
+    "Symbolic/BugInjection/Disproofs/Impl/SmallSubgroup",
+    "Symbolic/BugInjection/Disproofs/Impl/WeakState",
+)
+GENERATED_CKPT_PLAN_REL = "Symbolic/BugInjection/Disproofs/Impl/ckpt_chunk_plan.json"
+GENERATED_CKPT_BUG_DIRS = {
+    "small-subgroup": "SmallSubgroup",
+    "weak-state": "WeakState",
+}
+GENERATED_CKPT_CALL_DIR_RE = re.compile(r"\ACall\d+\Z")
+
+_COMMENT_TOKEN = re.compile(r"/-|-/|--")
+_IMPORT = re.compile(r"(public\s+)?(?:meta\s+)?import\s+(?:all\s+)?(.+)")
+
+def strip_line(line, depth):
+    """Returns the non-comment code in `line` and the updated `/- ... -/` nesting depth."""
+    out = []
+    pos = 0
+    for m in _COMMENT_TOKEN.finditer(line):
+        tok = m.group()
+        if depth == 0:
+            if tok == "--":
+                out.append(line[pos:m.start()])
+                return "".join(out), 0
+            if tok == "/-":
+                out.append(line[pos:m.start()])
+                depth = 1
+        elif tok == "/-":
+            depth += 1
+        elif tok == "-/":
+            depth -= 1
+            if depth == 0:
+                pos = m.end()
+    if depth == 0:
+        out.append(line[pos:])
+    return "".join(out), depth
+
+def read_header_entries(path):
+    """Returns `(module, is_public)` pairs imported by a Lean header, and whether code follows."""
+    entries = []
+    depth = 0
+    with open(path, encoding="utf-8") as fp:
+        for line in fp:
+            code, depth = strip_line(line, depth)
+            code = code.strip()
+            if not code or code in ("module", "prelude"):
+                continue
+            m = _IMPORT.fullmatch(code)
+            if m is None:
+                return entries, True
+            is_public = m.group(1) is not None
+            for mod in m.group(2).split():
+                entries.append((mod, is_public))
+    return entries, False
+
+
+def read_header(path):
+    """Returns modules imported by a Lean file header, and whether code follows."""
+    entries, has_body = read_header_entries(path)
+    return [mod for mod, _ in entries], has_body
+
+def _is_git_worktree(root):
+    if not os.path.exists(os.path.join(root, ".git")):
+        return False
+    try:
+        res = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, check=False,
+        )
+        return res.returncode == 0 and res.stdout.strip() == "true"
+    except OSError:
+        return False
+
+
+def _generated_ckpt_lean_files(root):
+    """Returns materialized `.lean` files under gitignored `Disproofs/Impl/*/Call<k>/` directories."""
+    found = []
+    for rel_parent in GENERATED_CKPT_CALL_PARENTS:
+        parent_dir = os.path.join(root, rel_parent)
+        if not os.path.isdir(parent_dir):
+            continue
+        for entry in sorted(os.listdir(parent_dir)):
+            if not GENERATED_CKPT_CALL_DIR_RE.match(entry):
+                continue
+            call_dir = os.path.join(parent_dir, entry)
+            if not os.path.isdir(call_dir):
+                continue
+            for fn in sorted(os.listdir(call_dir)):
+                if fn.endswith(".lean"):
+                    found.append(f"{rel_parent}/{entry}/{fn}")
+    return found
+
+
+def lean_files(root):
+    """Returns `.lean` files in scope for import checks, relative to `root`."""
+    if _is_git_worktree(root):
+        out = subprocess.run(
+            ["git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "--",
+             "*.lean"], capture_output=True, text=True, check=True).stdout
+        raw_files = out.splitlines() + _generated_ckpt_lean_files(root)
+    else:
+        raw_files = []
+        for dirpath, dirs, filenames in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d not in IGNORE_DIRS)
+            for fn in filenames:
+                if fn.endswith(".lean"):
+                    raw_files.append(
+                        os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
+                    )
+    return sorted({f for f in raw_files
+                   if f.endswith(".lean") and not f.startswith(EXCLUDE) and f != "lakefile.lean"
+                   and os.path.isfile(os.path.join(root, f))})
+
+def top(module):
+    return module.split(".", 1)[0]
+
+def under(module, prefixes):
+    return any(module == p or module.startswith(p + ".") for p in prefixes)
+
+
+def has_component(module, names):
+    return any(part in names for part in module.split("."))
+
+
+def _bfs_closure(roots, path_of, imports_of):
+    parent = {}
+    missing = []
+    queue = collections.deque()
+    for r in roots:
+        if r in path_of:
+            parent[r] = None
+            queue.append(r)
+        else:
+            missing.append(r)
+    while queue:
+        m = queue.popleft()
+        for imp in imports_of[m]:
+            if imp in path_of and imp not in parent:
+                parent[imp] = m
+                queue.append(imp)
+    return parent, missing
+
+
+def _format_chain(m, parent):
+    chain = [m]
+    while parent[chain[-1]] is not None:
+        chain.append(parent[chain[-1]])
+    return " <- ".join(chain)
+
+
+def _load_planned_ckpt_modules(root):
+    """Loads planned `{Call<k>.C<name>, Call<k>.Ckpt<dst>}` modules from `ckpt_chunk_plan.json`.
+
+    Returns `(planned_by_call, owner_of_planned_mod, plan_errors)` where:
+      - `planned_by_call[call_mod] = (call_dir_rel, frozenset(expected_mods))`
+      - `owner_of_planned_mod[imp_mod] = call_mod`
+      - `plan_errors` is non-empty if `ckpt_chunk_plan.json` exists and is malformed.
+    """
+    plan_path = os.path.join(root, GENERATED_CKPT_PLAN_REL)
+    if not os.path.isfile(plan_path):
+        return {}, {}, []
+    try:
+        with open(plan_path, encoding="utf-8") as fp:
+            raw = json.load(fp)
+    except (OSError, ValueError) as exc:
+        return {}, {}, [f"{GENERATED_CKPT_PLAN_REL}: invalid JSON: {exc}"]
+    if not isinstance(raw, dict):
+        return {}, {}, [f"{GENERATED_CKPT_PLAN_REL}: root must be a JSON object"]
+
+    planned_by_call = {}
+    owner_of_planned_mod = {}
+    errors = []
+    for bug_key, call_map in sorted(raw.items()):
+        bug_dir = GENERATED_CKPT_BUG_DIRS.get(bug_key)
+        if bug_dir is None or not isinstance(call_map, dict):
+            errors.append(f"{GENERATED_CKPT_PLAN_REL}: invalid bug entry {bug_key!r}")
+            continue
+        for call_str, chunks in sorted(call_map.items()):
+            if not (isinstance(call_str, str) and call_str.isdigit() and isinstance(chunks, list)):
+                errors.append(
+                    f"{GENERATED_CKPT_PLAN_REL}: invalid call entry {bug_key}.{call_str!r}"
+                )
+                continue
+            call_dir_rel = f"Symbolic/BugInjection/Disproofs/Impl/{bug_dir}/Call{call_str}"
+            call_mod = f"Symbolic.BugInjection.Disproofs.Impl.{bug_dir}.Call{call_str}"
+            expected = set()
+            valid_call = True
+            for ch in chunks:
+                if not isinstance(ch, dict) or not isinstance(ch.get("name"), str) or not ch["name"]:
+                    errors.append(
+                        f"{GENERATED_CKPT_PLAN_REL}: invalid chunk entry in {bug_key}.{call_str}"
+                    )
+                    valid_call = False
+                    break
+                expected.add(f"{call_mod}.C{ch['name']}")
+                dst = ch.get("dst")
+                if dst is not None:
+                    if not isinstance(dst, str) or not dst:
+                        errors.append(
+                            f"{GENERATED_CKPT_PLAN_REL}: invalid dst in {bug_key}.{call_str}"
+                        )
+                        valid_call = False
+                        break
+                    expected.add(f"{call_mod}.Ckpt{dst}")
+            if valid_call:
+                frozen = frozenset(expected)
+                planned_by_call[call_mod] = (call_dir_rel, frozen)
+                for m in frozen:
+                    owner_of_planned_mod[m] = call_mod
+    if errors:
+        return {}, {}, errors
+    return planned_by_call, owner_of_planned_mod, []
+
+
+def main(argv=None):
+    default_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                 "..", ".."))
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default=default_root, help="repository root (default: %(default)s)")
+    args = ap.parse_args(argv)
+
+    path_of = {}  # module -> file
+    imports_of = {}  # module -> imported modules
+    public_imports_of = {}  # module -> publicly imported modules
+    for f in lean_files(args.root):
+        mod = f[:-len(".lean")].replace("/", ".")
+        entries, _ = read_header_entries(os.path.join(args.root, f))
+        path_of[mod] = f
+        imports_of[mod] = [imp for imp, _ in entries]
+        public_imports_of[mod] = [imp for imp, is_pub in entries if is_pub]
+    local_tops = {top(m) for m in path_of}
+
+    def kind(imp):
+        t = top(imp)
+        if t == GENERATED or t not in local_tops:
+            return "external"
+        if t in (SYMBOLIC, BINARY):
+            return t
+        return "computational"
+
+    planned_by_call, owner_of_planned_mod, plan_errors = _load_planned_ckpt_modules(args.root)
+    violations = collections.defaultdict(list)
+    for err in plan_errors:
+        violations[1].append(err)
+    for mod in sorted(imports_of):
+        f, t = path_of[mod], top(mod)
+        for imp in imports_of[mod]:
+            k = kind(imp)
+            if t == SYMBOLIC:
+                if k == "computational":
+                    violations[1].append(f"{f}: imports {k} module {imp}")
+                elif k != "external" and imp not in path_of:
+                    owner_call_mod = owner_of_planned_mod.get(imp)
+                    if owner_call_mod is not None:
+                        call_dir_rel, expected_mods = planned_by_call[owner_call_mod]
+                        call_dir_abs = os.path.join(args.root, call_dir_rel)
+                        imp_abs = os.path.join(args.root, imp.replace(".", "/") + ".lean")
+                        if (
+                            (mod == owner_call_mod or mod in expected_mods)
+                            and not os.path.lexists(call_dir_abs)
+                            and not os.path.lexists(imp_abs)
+                        ):
+                            continue
+                    violations[1].append(f"{f}: imports {imp}, which has no source file")
+            elif t == BINARY:
+                if k in ("computational", SYMBOLIC):
+                    violations[2].append(f"{f}: imports {k} module {imp}")
+                elif k != "external" and imp not in path_of:
+                    violations[2].append(f"{f}: imports {imp}, which has no source file")
+            elif k == SYMBOLIC and not f.startswith(COMPARATOR_DIRS):
+                violations[3].append(f"{f}: imports {imp}")
+
+    # Rule 4: local import closure of `STATEMENT_ROOTS`.
+    parent, missing_roots = _bfs_closure(STATEMENT_ROOTS, path_of, imports_of)
+    for r in missing_roots:
+        violations[4].append(f"statement root {r} has no source file")
+    for m in sorted(parent):
+        if under(m, CRYPTO_GAMES):
+            violations[4].append(f"{m} is in the closure: {_format_chain(m, parent)}")
+
+    # Rule 5: local import closure of `HEADLINE_ROOTS`.
+    headline_parent, missing_headlines = _bfs_closure(HEADLINE_ROOTS, path_of, imports_of)
+    for r in missing_headlines:
+        violations[5].append(f"headline root {r} has no source file")
+    for m in sorted(headline_parent):
+        if under(m, HEADLINE_FORBIDDEN) or has_component(m, ("Proofs", "Tests")):
+            violations[5].append(f"{m} is in the closure: {_format_chain(m, headline_parent)}")
+
+    # Rule 6: `Symbolic/Theorems/*.lean` `public import`s and comparator challenge imports.
+    theorem_mods = [m for m in sorted(public_imports_of) if under(m, ("Symbolic.Theorems",))]
+    for mod in theorem_mods:
+        f = path_of[mod]
+        for imp in public_imports_of[mod]:
+            if under(imp, THEOREM_PUBLIC_FORBIDDEN) or has_component(imp, ("Proofs",)):
+                violations[6].append(f"{f}: public imports {imp}")
+    challenge_mods = [
+        m
+        for m in sorted(imports_of)
+        if under(m, ("comparator.ComparatorChallenge.Symbolic", "ComparatorChallenge.Symbolic"))
+    ]
+    for mod in challenge_mods:
+        f = path_of[mod]
+        for imp in imports_of[mod]:
+            if (
+                under(imp, THEOREM_PUBLIC_FORBIDDEN)
+                or under(imp, ("Symbolic.Theorems", "Computational"))
+                or has_component(imp, ("Proofs", "Tests"))
+            ):
+                violations[6].append(f"{f}: imports {imp}")
+
+    for rule in sorted(violations):
+        for v in violations[rule]:
+            print(f"RULE{rule} {v}")
+    n = collections.Counter(top(m) for m in path_of)
+    other = len(path_of) - n[SYMBOLIC] - n[BINARY]
+    print(f"check_symbolic_deps: {n[SYMBOLIC]} Symbolic, {n[BINARY]} LibsignalBinary and {other} "
+          "other modules")
+    print(f"  rule 1 (Symbolic imports): {len(violations[1])} violations")
+    print(f"  rule 2 (LibsignalBinary imports): {len(violations[2])} violations")
+    print(f"  rule 3 (Symbolic imported from outside Symbolic/): {len(violations[3])} violations")
+    print(f"  rule 4 (closure of the {len(STATEMENT_ROOTS)} statement roots, {len(parent)} local "
+          f"modules): {len(violations[4])} violations")
+    print(f"  rule 5 (closure of the {len(HEADLINE_ROOTS)} headline roots, {len(headline_parent)} "
+          f"local modules): {len(violations[5])} violations")
+    print(f"  rule 6 (public imports of the {len(theorem_mods)} Symbolic/Theorems/ modules): "
+          f"{len(violations[6])} violations")
+    return 1 if any(violations.values()) else 0
+
+if __name__ == "__main__":
+    sys.exit(main())

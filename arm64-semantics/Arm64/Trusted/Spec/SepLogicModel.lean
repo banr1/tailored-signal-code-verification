@@ -1,0 +1,30 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import Arm64.Trusted.Spec.SepLogic
+
+/-!
+# Separation Logic Heap Model Bridge
+
+Exposes the `CoeFun SepProp (fun _ => Heap -> Prop)` coercion (`SepProp.holds`) to foundational
+metatheory modules in `Arm64` and `ProofLib`. Enforced by `check-trust-guards`: only `Arm64.*` and
+`ProofLib.*` may import this module, and never via `public import`.
+-/
+
+public section
+
+namespace Arm64
+
+/-- Coerce a `SepProp` assertion to its underlying predicate `SepProp.holds`. -/
+instance : CoeFun SepProp (fun _ => Heap → Prop) where
+  coe := SepProp.holds
+
+end Arm64

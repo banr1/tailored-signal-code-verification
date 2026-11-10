@@ -1,0 +1,6 @@
+namespace ScratchFixture.P8NativeDecide
+
+theorem p8_native_lemma : (List.range 8).length = 8 := by
+  native_decide
+
+end ScratchFixture.P8NativeDecide

@@ -1,0 +1,51 @@
+# Translation configuration for `third_party/libsignal/libsignal-session/cli/io` (`rust-obj2lean`).
+#
+# Extracts the `libsignal-cli-io` crate (`read_file`, `write_file`, `read_stdin`, `write_stdout`,
+# plus its crate-local `<alloc::raw_vec::RawVecInner>::finish_grow` copy) compiled from the parent
+# `libsignal-session` crate directory (`../..`) with the same `Cargo.lock`, release profile, and
+# `rustflags` as `../../translation.toml`, into a standalone image (`SignalSessionIoObj.lean`) and
+# relocatable `Obj.MultiPlacedLib` (`SignalSessionIoPlacedObj.lean`) so the main
+# `libsignalSessionObj` offsets do not move.
+
+crate_dir = "../.."
+crates = ["libsignal-cli-io"]
+obj_name = "signalSessionIo"
+obj_file = "GeneratedLean/SignalSessionIoObj.lean"
+namespace_prefix = "CryptoVerification"
+page_separate_data = true
+legacy_linked_image = true
+hashed_inputs = [
+    "cli/io/translation.toml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "cli/io/Cargo.toml",
+    "cli/io/src/lib.rs",
+]
+rustflags = ["--cfg", 'aes_backend="soft"', "--cfg", 'sha2_backend="soft"']
+license_header = [
+    "Machine code in this file is compiled from original repository source in",
+    "`third_party/libsignal/libsignal-session/cli/io/src/lib.rs` (Copyright 2026 Google LLC;",
+    "SPDX-License-Identifier: Apache-2.0; copies no upstream `libsignal` source), plus inlined",
+    "Rust `core`/`alloc`/`std` code under MIT OR Apache-2.0.",
+    "",
+    "See `third_party/libsignal/README.md`.",
+]
+
+[upstream]
+name = "libsignal"
+repo_url = "https://github.com/signalapp/libsignal"
+tag = "v0.105.4"
+vendor_symlink = "vendor/libsignal"
+probe_path = "rust/protocol/Cargo.toml"
+env_var = "LIBSIGNAL_SRC"
+no_clone_env_var = "LIBSIGNAL_NO_CLONE"
+home_subdir = "sw/libsignal"
+
+[placed]
+multi = true
+exports = [
+    "libsignal_cli_io::read_file",
+    "libsignal_cli_io::write_file",
+    "libsignal_cli_io::read_stdin",
+    "libsignal_cli_io::write_stdout",
+]

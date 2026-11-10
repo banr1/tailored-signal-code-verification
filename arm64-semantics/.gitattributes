@@ -1,0 +1,11 @@
+# Review hygiene for third-party code (see `docs/extracting-binaries.md`, "Upstream sources").
+#
+# `linguist-generated` collapses a path's diff in GitHub pull requests by default;
+# `linguist-vendored` excludes it from language statistics and code search.
+
+third_party/** linguist-vendored=true
+**/vendor/** linguist-vendored=true
+
+# Lockfiles (their integrity is checked by Cargo against the `checksum` fields).
+Cargo.lock linguist-generated=true
+**/Cargo.lock linguist-generated=true

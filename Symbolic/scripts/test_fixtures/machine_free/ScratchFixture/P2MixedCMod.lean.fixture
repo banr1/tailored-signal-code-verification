@@ -1,0 +1,9 @@
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.P2MixedCMod
+
+def layoutOffset : Nat := 16
+
+theorem machine_thm (s : Arm64.State) : s = s := rfl
+
+end ScratchFixture.P2MixedCMod

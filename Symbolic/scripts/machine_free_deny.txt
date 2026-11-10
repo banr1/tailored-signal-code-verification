@@ -1,0 +1,86 @@
+# Denied defining-module patterns for `Symbolic/scripts/machine_free_check.py`.
+#
+# Format:
+#   - `[group <id>]` starts a machine-parsed pattern group (`--exclude-deny-group <id>` omits
+#     that group's patterns; comments are never used for group membership).
+#   - One exact module (`Foo.Bar.Baz`) or module-prefix wildcard (`Foo.Bar.*`, matching both
+#     `Foo.Bar` and `Foo.Bar.<submodule>`) per line.
+#   - `#` starts a comment. Empty lines are ignored; malformed lines fail closed.
+#
+# Classification uses `env.getModuleIdxFor? c -> env.header.moduleNames[idx]`,
+# never the constant's name prefix. A constant defined in a denied module FAILs the check unless
+# it has an exact entry in `machine_free_allow.txt` (or `--allow-file`); the walk descends into
+# allowed constants too.
+#
+# What this check does not see: numerals that the `asm%` / `asm64%` / `asm8%` elaborators inline
+# from `AsmConstants` at elaboration time leave no constant behind. Layout literals in statements
+# are covered by the SPEC-KEY guards, not by this check.
+
+# 1. The machine itself: the engine, its proof library and generated code.
+[group 1]
+Arm64.*
+ProofLib.*
+GeneratedLean.*
+# Engine `mallocng` build-generated object module (gitignored in `arm64-semantics`).
+VerifiedLibraries.Mallocng.Generated.*
+
+# 2. Specification modules whose constants describe machine state, the loader, ELF images, hooks,
+# heap layout or extern contracts on the machine. Each has at least one constant whose cone
+# reaches group 1, and the trusted symbolic CLI statement uses none of their constants.
+# (Five other modules also contain such constants but are used by the statement for their pure
+# definitions, so they are NOT denied by module; the transitive walk catches their machine-level
+# constants through group 1: SignalSession.Run, Hardware.MachineEvents,
+# Refinement.Composed.{Statement,AsmLevelSecurity}, Refinement.PQXDH.Externs. Likewise
+# `Security.Binary` is not denied: `CompRefinementPreservationCli` reads its pure
+# `SignalSessionSecureFor`, and its ELF-level `SignalSessionSecure*` reach group 2 through
+# `Refinement.ElfBinding` (`elfRel`, `HooksMatchInterpretation`).)
+[group 2]
+LibsignalBinary.Specifications.LibsignalAesCbc
+LibsignalBinary.Specifications.LibsignalE2E.HooksCommon
+LibsignalBinary.Specifications.LibsignalE2E.PqxdhHooksCommon
+LibsignalBinary.Specifications.LibsignalHmac
+LibsignalBinary.Specifications.LibsignalPublicApi
+LibsignalBinary.Specifications.LibsignalPublicApiRepr
+LibsignalBinary.Specifications.LibsignalSession
+LibsignalBinary.Specifications.LibsignalSessionGuards
+LibsignalBinary.Specifications.LibsignalSessionRepr
+LibsignalBinary.Specifications.LibsignalSpqrV1.Entries
+LibsignalBinary.Specifications.LibsignalSpqrV1.Guards
+LibsignalBinary.Specifications.LibsignalSpqrV1.Hooks
+LibsignalBinary.Specifications.LibsignalSpqrV1.Statements
+LibsignalBinary.Specifications.LibsignalTripleRatchet
+LibsignalBinary.Specifications.LibsignalTripleRatchetGuards
+LibsignalBinary.Specifications.LibsignalTripleRatchetProst
+LibsignalBinary.Specifications.LibsignalTripleRatchetRepr
+LibsignalBinary.Specifications.RecordCodecsBinary
+LibsignalBinary.Specifications.RecordCodecsBinary.SignedPreKey
+LibsignalBinary.Specifications.RustHeap.Alloc
+LibsignalBinary.Specifications.RustHeap.Vec
+LibsignalBinary.Specifications.SignalSession.CliBinaryPq
+LibsignalBinary.Specifications.SignalSession.CliProcess
+LibsignalBinary.Specifications.SignalSession.CliRun
+LibsignalBinary.Specifications.SignalSession.Process
+Symbolic.Specifications.Refinement.ElfBinding
+# 3. Machine-level data whose cone is core-only (plain bytes and numbers), so the walk through
+# group 1 cannot catch it; denied by defining module.
+[group 3]
+# The session binary's ELF file, as a byte list (`cliElfBytes`).
+LibsignalBinary.Specifications.SignalSession.CliElf
+# Rust type layouts, hashbrown internals and vtable slots taken from the compiled binary.
+LibsignalBinary.Specifications.AsmConstants
+
+# 5. Not specifications: proofs, theorems, tests and the computational development. A trusted
+# statement must not rest on any of their definitions. Denied as whole trees for the statement
+# run; the checker has no default deny, so a module outside every pattern here is not denied.
+[group 5]
+LibsignalBinary.Proofs.*
+LibsignalBinary.SpecAudit.*
+LibsignalBinary.Cli
+LibsignalBinary.Heap.*
+# Engine `mallocng` verified library (Hoare specs and proofs imported by `LibsignalBinary.Heap.*`).
+VerifiedLibraries.Mallocng.*
+Symbolic.Proofs.*
+Symbolic.Theorems.*
+Symbolic.Tests.*
+Symbolic.BugInjection.*
+Computational.*

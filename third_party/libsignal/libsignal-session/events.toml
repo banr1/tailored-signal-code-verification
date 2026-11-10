@@ -1,0 +1,689 @@
+# Events of the libsignal session binary (`third_party/libsignal/libsignal-session`, libsignal
+# v0.105.4's one-to-one session code), as a reference table.
+#
+# Documentation only: no tool reads this file. The trusted event table is the Lean value
+# `libsignalEvents` in `Symbolic/Specifications/Hardware/MachineEvents.lean`, with the
+# API list `libsignalApi` (same file) and the struct layouts in
+# `Symbolic/Specifications/Rust/SessionLayout.lean`.
+# Nothing checks that the two agree; keep them in step by hand.
+#
+# This file lists every point where control leaves the binary's own code, and says which events
+# each one emits:
+#   * the 3 API functions (`src/lib.rs`). `session_message_encrypt` and
+#     `session_message_decrypt_signal` correspond to the model's `messageEncrypt` and
+#     `messageDecrypt`;
+#   * every extern stub of the binary (136, image offsets `0x6ee60`-`0x6f07c`), and the 6 modeled
+#     system calls.
+# Code compiled into the image is not listed: no events come from it except through the API rows
+# above. That includes the in-memory stores (`InMemSessionStore`, `InMemIdentityKeyStore`,
+# `InMemSignalProtocolStore`; store operations emit no hardware events, record contents are tied
+# through `leak`) and the whole `bytes`, `uuid`, `prost` and `spqr` crates (`translation.toml`).
+# Rows with `emits = "none"` have no counterpart in `libsignalEvents`, and neither do the
+# `[[syscall]]` rows: system calls are not event sources (`AugStep.lean`). The stub list is that of
+# the binary exported with rustc 1.98.1; another toolchain can change it.
+#
+# Notes:
+#   * `store` event removed: the hardware `store` event was removed from `MachineEvent`. Record
+#     contents are tied through `leak` (`recordBytes`, `LeakMatches`, `SessionReadOk`).
+#   * `send` is emitted only when `session_message_encrypt` returns
+#     `Some(Ok(CiphertextMessage::SignalMessage(_)))` (word0 == `encryptSignalMessageTag`).
+#     On error or early stop, only `pt` is emitted.
+#   * `accept` is emitted on normal return of `session_message_decrypt_signal` when it returns
+#     `Some(Ok(_))` (word0 == `decryptOkTag`).
+#   * SPQR (sparse post-quantum ratchet) is in-image code; the `libcrux` ML-KEM (module-lattice key
+#     encapsulation mechanism) and HMAC (hash-based message authentication code) functions that it
+#     and libsignal's `kem` module call are stubs with `emits = "none"` (out of scope).
+
+tags = ["pt", "send", "rng", "accept", "recv", "leak"]   # `leak`: the environment's compromise move
+
+[types]
+# Byte buffers at fixed offsets of compiled structs (aarch64 layouts from `-Zprint-type-sizes` on
+# this image's build): `SignalMessage.serialized: Box<[u8]>` at +40 (ptr) / +48 (len); in the
+# 248-byte `Option<Result<CiphertextMessage, SignalProtocolError>>` the `SignalMessage` payload is
+# at +8, so its `serialized` is at +48 / +56.
+"SignalMessage" = "bytes_at(40, 48)"
+"Option<Result<CiphertextMessage,SignalProtocolError>>" = "bytes_at(48, 56)"
+"ProtocolAddress" = "u64"   # opaque: only passed by reference
+"SessionRecord" = "u64"     # opaque: in-image store object
+
+# ---- API functions (the environment's calls; one call = one atomic protocol step) ----
+
+# libsignal `message_encrypt::<HookRng>` = DyLean `messageEncrypt` / `messageEncryptAbort`. `pt`
+# (the plaintext, matched with `genRand`) on entry; `send` (the serialized `SignalMessage`,
+# matched with `sendMessage`) at exit only on `Some(Ok(CiphertextMessage::SignalMessage(_)))`.
+# The trailing `now: SystemTime` (16 bytes) has no register left and goes on the stack, so it is
+# not in `sig` (only register parameters are).
+[[api]]
+symbol = "session_message_encrypt"
+sig = "fn(ptext: &[u8], remote_address: &ProtocolAddress, local_address: &ProtocolAddress, session_store: &mut dyn SessionStore, identity_store: &mut dyn IdentityKeyStore) -> Option<Result<CiphertextMessage, SignalProtocolError>>"
+emits = [{ tag = "pt", from = "ptext" },
+         { tag = "send", from = "ret", at = "exit", cond = "isSignalMessage" }]
+
+# libsignal `message_decrypt_signal::<HookRng>` = DyLean `messageDecrypt` (runs the DH ratchet
+# inside). `recv` on entry: the wire bytes of the delivered message (`SignalMessage.serialized`),
+# matched with the attacker's `Network` re-send just before `messageDecrypt`. Its fresh ratchet
+# key is an `rng` (RNG hook). At exit, emits payload-free `accept` on `Some(Ok(_))` (matches
+# model's stored state entry).
+[[api]]
+symbol = "session_message_decrypt_signal"
+sig = "fn(ciphertext: &SignalMessage, remote_address: &ProtocolAddress, local_address: &ProtocolAddress, session_store: &mut dyn SessionStore, identity_store: &mut dyn IdentityKeyStore) -> Option<Result<Vec<u8>, SignalProtocolError>>"
+emits = [{ tag = "recv", from = "ciphertext" },
+         { tag = "accept", at = "exit", cond = "isOk" }]
+
+# The wire parse before decrypt: no protocol step of its own (the delivered message is the
+# `recv` of the decrypt call that consumes it, so a parse alone emits nothing).
+[[api]]
+symbol = "session_signal_message_parse"
+emits = "none"
+
+# ---- Syscalls (every modeled one) ----
+
+[[syscall]]
+nr = 278   # getrandom: OS randomness
+sig = "fn(buf: &mut [u8], flags: u32) -> usize"
+emits = [{ tag = "rng", from = "buf", at = "exit" }]
+
+[[syscall]]
+nr = 64    # write: the session code does no I/O (stdout/stderr only)
+emits = "none"
+
+[[syscall]]
+nr = 93    # exit
+emits = "none"
+
+[[syscall]]
+nr = 94    # exit_group
+emits = "none"
+
+[[syscall]]
+nr = 214   # brk
+emits = "none"
+
+[[syscall]]
+nr = 222   # mmap
+emits = "none"
+
+# ---- Extern stubs (every stub of the image: 136) ----
+
+# OS randomness (`/dev/urandom` fallback of the `getrandom` crate): bytes written to `dest`.
+# Not on the session API paths (they use `HookRng`), but any OS randomness is an `rng`.
+[[extern]]
+symbol = "getrandom::backends::linux_android_with_fallback::use_file_fallback"
+sig = "fn(dest: &mut [u8]) -> Result<(), Error>"
+emits = [{ tag = "rng", from = "dest", at = "exit" }]
+
+# The RNG hook `libsignal_session_rng_fill(dst: *mut u8, len: usize)` (same two registers
+# as `&mut [u8]`). Every `csprng` of the session code is `HookRng` (src/lib.rs), so every
+# fresh value of the protocol (e.g. the DH ratchet key pair) is an `rng` event.
+[[extern]]
+symbol = "libsignal_session_rng_fill"
+sig = "fn(dst: &mut [u8])"
+emits = [{ tag = "rng", from = "dst", at = "exit" }]
+
+# -- Allocator and `mem*` (memory management, no protocol data leaves the binary) --
+
+[[extern]]
+symbol = "__rustc::__rust_no_alloc_shim_is_unstable_v2"
+emits = "none"
+
+[[extern]]
+symbol = "__rustc::__rust_alloc"
+emits = "none"
+
+[[extern]]
+symbol = "memset"
+emits = "none"
+
+[[extern]]
+symbol = "<hashbrown::raw::Fallibility>::capacity_overflow"
+emits = "none"
+
+[[extern]]
+symbol = "__rustc::__rust_dealloc"
+emits = "none"
+
+[[extern]]
+symbol = "<hashbrown::raw::Fallibility>::alloc_err"
+emits = "none"
+
+[[extern]]
+symbol = "memmove"
+emits = "none"
+
+[[extern]]
+symbol = "<hashbrown::raw::Fallibility>::capacity_overflow#1"
+emits = "none"
+
+[[extern]]
+symbol = "memcpy"
+emits = "none"
+
+[[extern]]
+symbol = "<hashbrown::raw::Fallibility>::alloc_err#1"
+emits = "none"
+
+[[extern]]
+symbol = "alloc::raw_vec::handle_error"
+emits = "none"
+
+[[extern]]
+symbol = "bcmp"
+emits = "none"
+
+[[extern]]
+symbol = "alloc::alloc::handle_alloc_error"
+emits = "none"
+
+[[extern]]
+symbol = "__rustc::__rust_realloc"
+emits = "none"
+
+[[extern]]
+symbol = "memcmp"
+emits = "none"
+
+[[extern]]
+symbol = "<alloc::raw_vec::RawVec<alloc::vec::Vec<u8>>>::grow_one"
+emits = "none"
+
+[[extern]]
+symbol = "<alloc::raw_vec::RawVec<alloc::string::String>>::grow_one"
+emits = "none"
+
+[[extern]]
+symbol = "<alloc::raw_vec::RawVec<u8>>::grow_one"
+emits = "none"
+
+[[extern]]
+symbol = "__rustc::__rust_alloc_zeroed"
+emits = "none"
+
+# -- Panics and aborts (stop the run; no events) --
+
+[[extern]]
+symbol = "core::panicking::panic_const::panic_const_add_overflow"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_const::panic_const_mul_overflow"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_bounds_check"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_const::panic_const_sub_overflow"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_fmt"
+emits = "none"
+
+[[extern]]
+symbol = "core::result::unwrap_failed"
+emits = "none"
+
+[[extern]]
+symbol = "core::option::unwrap_failed"
+emits = "none"
+
+[[extern]]
+symbol = "std::sync::lazy_lock::panic_poisoned"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_const::panic_const_async_fn_resumed"
+emits = "none"
+
+[[extern]]
+symbol = "core::slice::index::slice_index_fail"
+emits = "none"
+
+[[extern]]
+symbol = "core::option::expect_failed"
+emits = "none"
+
+[[extern]]
+symbol = "<alloc::vec::Vec<_, _>>::remove::assert_failed"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::assert_failed_inner"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::panic_const::panic_const_shl_overflow"
+emits = "none"
+
+[[extern]]
+symbol = "core::str::slice_error_fail"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::assert_failed::<u64, u64>"
+emits = "none"
+
+[[extern]]
+symbol = "core::panicking::assert_failed::<usize, usize>"
+emits = "none"
+
+# -- Logging (off by precondition: `log::MAX_LOG_LEVEL_FILTER = 0`; a logger handed key material
+# would weaken the guarantee without breaking a proof) --
+#
+
+[[extern]]
+symbol = "<log::__private_api::GlobalLogger as log::Log>::log"
+emits = "none"
+
+# -- `libcrux` ML-KEM and HMAC (called by the in-image SPQR code and by libsignal's `kem` module):
+# out of scope. Their internal randomness
+# and state are not modeled by events. --
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem1024::kyber::generate_key_pair"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem1024::kyber::decapsulate"
+emits = "none"
+
+[[extern]]
+symbol = "<libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::from_seed"
+emits = "none"
+
+[[extern]]
+symbol = "<libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::pk1"
+emits = "none"
+
+[[extern]]
+symbol = "<libcrux_ml_kem::mlkem768::incremental::KeyPairCompressedBytes>::pk2"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem768::incremental::encapsulate1"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem768::incremental::validate_pk_bytes"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_hmac::hmac"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem768::incremental::encapsulate2"
+emits = "none"
+
+[[extern]]
+symbol = "libcrux_ml_kem::mlkem768::incremental::decapsulate_compressed_key"
+emits = "none"
+
+# -- Cryptographic primitives: modeled by their contracts / the concretization, not by events
+# (SHA-2 compression, AES, AES-256-CBC, X25519 / curve25519, Ed25519-style signatures) --
+
+[[extern]]
+symbol = "sha2::sha512::compress512"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::scalar::Scalar>::from_bytes_mod_order_wide"
+emits = "none"
+
+[[extern]]
+symbol = "subtle::black_box::<u8>"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::scalar::Scalar>::from_bytes_mod_order"
+emits = "none"
+
+[[extern]]
+symbol = "<&curve25519_dalek::scalar::Scalar as core::ops::arith::Mul<&curve25519_dalek::edwards::EdwardsBasepointTable>>::mul"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::edwards::EdwardsPoint>::compress"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::scalar::Scalar as core::ops::arith::Mul>::mul"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::scalar::Scalar as core::ops::arith::Add>::add"
+emits = "none"
+
+[[extern]]
+symbol = "<x25519_dalek::x25519::StaticSecret as core::ops::drop::Drop>::drop"
+emits = "none"
+
+[[extern]]
+symbol = "sha2::sha256::compress256"
+emits = "none"
+
+[[extern]]
+symbol = "aes::soft::fixslice::aes256_key_schedule"
+emits = "none"
+
+[[extern]]
+symbol = "aes::soft::fixslice::aes256_encrypt"
+emits = "none"
+
+[[extern]]
+symbol = "signal_crypto::aes_cbc::aes_256_cbc_encrypt"
+emits = "none"
+
+[[extern]]
+symbol = "signal_crypto::aes_cbc::aes_256_cbc_decrypt"
+emits = "none"
+
+[[extern]]
+symbol = "<x25519_dalek::x25519::PublicKey as core::convert::From<&x25519_dalek::x25519::StaticSecret>>::from"
+emits = "none"
+
+[[extern]]
+symbol = "<x25519_dalek::x25519::StaticSecret>::diffie_hellman"
+emits = "none"
+
+[[extern]]
+symbol = "<x25519_dalek::x25519::SharedSecret as core::ops::drop::Drop>::drop"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::montgomery::MontgomeryPoint>::to_edwards"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::edwards::EdwardsPoint>::is_torsion_free"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::edwards::EdwardsPoint as core::ops::arith::Neg>::neg"
+emits = "none"
+
+[[extern]]
+symbol = "<curve25519_dalek::edwards::EdwardsPoint>::vartime_double_scalar_mul_basepoint"
+emits = "none"
+
+# -- Formatting, strings and parsing helpers (error messages, log arguments, addresses) --
+
+[[extern]]
+symbol = "core::str::converts::from_utf8"
+emits = "none"
+
+[[extern]]
+symbol = "<hex::BytesToHexChars as core::iter::traits::iterator::Iterator>::size_hint"
+emits = "none"
+
+[[extern]]
+symbol = "<hex::BytesToHexChars as core::iter::traits::iterator::Iterator>::next"
+emits = "none"
+
+[[extern]]
+symbol = "<alloc::string::String as core::clone::Clone>::clone"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as core::fmt::LowerHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "core::fmt::write"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<usize as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "alloc::fmt::format::format_inner"
+emits = "none"
+
+[[extern]]
+symbol = "<u8 as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u64 as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u32>::_fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<str as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_tuple"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugTuple>::field"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugTuple>::finish"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::write_str"
+emits = "none"
+
+[[extern]]
+symbol = "<i32 as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<i32 as core::fmt::LowerHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<i32 as core::fmt::UpperHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_tuple_field1_finish"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_list"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugList>::entry"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugList>::finish"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_struct_field2_finish"
+emits = "none"
+
+[[extern]]
+symbol = "<u8 as core::fmt::LowerHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u8 as core::fmt::UpperHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::time::Duration as core::fmt::Debug>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<str as core::fmt::Debug>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<getrandom::error::Error as core::fmt::Debug>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_struct"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugStruct>::field"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::builders::DebugStruct>::finish"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as core::fmt::UpperHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u64 as core::fmt::LowerHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u64 as core::fmt::UpperHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<usize as core::fmt::LowerHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<usize as core::fmt::UpperHex>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_tuple_field2_finish"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::debug_struct_field1_finish"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter as core::fmt::Write>::write_str"
+emits = "none"
+
+[[extern]]
+symbol = "core::slice::memchr::memchr_aligned"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as bitflags::parser::ParseHex>::parse_hex"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as core::fmt::Binary>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<u32 as core::fmt::Octal>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::num::nonzero::NonZero<u64> as core::str::traits::FromStr>::from_str"
+emits = "none"
+
+[[extern]]
+symbol = "<char as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "core::fmt::pointer_fmt_inner"
+emits = "none"
+
+[[extern]]
+symbol = "<bool as core::fmt::Display>::fmt"
+emits = "none"
+
+[[extern]]
+symbol = "<core::fmt::Formatter>::pad"
+emits = "none"
+
+# -- Outline atomics (compiler-rt): reached only on the shared (`KIND_ARC`) paths of the in-image
+# `bytes` code (reference counts), never on the session API paths. --
+
+[[extern]]
+symbol = "__aarch64_ldadd8_rel"
+emits = "none"
+
+[[extern]]
+symbol = "__aarch64_ldadd8_relax"
+emits = "none"
+
+[[extern]]
+symbol = "__aarch64_cas8_acq_rel"
+emits = "none"
+
+# -- Time (not modeled by the symbolic layer; timestamps are not secrets) --
+
+[[extern]]
+symbol = "<std::time::SystemTime>::now"
+emits = "none"
+
+[[extern]]
+symbol = "<std::time::SystemTime>::duration_since"
+emits = "none"
+
+[[extern]]
+symbol = "<std::time::SystemTime as core::ops::arith::Add<core::time::Duration>>::add"
+emits = "none"
+
+[[extern]]
+symbol = "<std::time::SystemTime>::elapsed"
+emits = "none"
+
+[[extern]]
+symbol = "<std::time::SystemTime>::checked_add"
+emits = "none"
+
+# -- Std runtime: lazy statics and HashMap SipHash keys (DoS hardening, not protocol randomness) --
+
+[[extern]]
+symbol = "std::sys::random::linux::hashmap_random_keys"
+emits = "none"
+
+[[extern]]
+symbol = "<std::sys::sync::once::futex::Once>::call"
+emits = "none"
+
+# -- `getrandom` plumbing: `init` returns libc `getrandom` as a function pointer (called
+# indirectly, so it must stay off the API paths, which use `HookRng`); error helper --
+
+[[extern]]
+symbol = "getrandom::backends::use_file::util_libc::last_os_error"
+emits = "none"
+
+[[extern]]
+symbol = "getrandom::backends::linux_android_with_fallback::init"
+emits = "none"
+
+# -- `std::io::Error` construction (`io::Error::new` with a custom payload) --
+
+[[extern]]
+symbol = "alloc::io::error::custom_owner_from_box"
+emits = "none"
+
+[[extern]]
+symbol = "<core::io::error::repr::Repr>::new_custom"
+emits = "none"
+
+# -- CPU feature detection (`cpufeatures`: the `AT_HWCAP` auxiliary-vector bits that select
+# hardware-accelerated code paths) --
+
+[[extern]]
+symbol = "cpufeatures::aarch64::getauxval_hwcap"
+emits = "none"

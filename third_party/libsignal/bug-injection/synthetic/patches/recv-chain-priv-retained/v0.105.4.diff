@@ -1,0 +1,13 @@
+diff --git a/rust/protocol/src/double_ratchet.rs b/rust/protocol/src/double_ratchet.rs
+index 0000000..1111111 100644
+--- a/rust/protocol/src/double_ratchet.rs
++++ b/rust/protocol/src/double_ratchet.rs
+@@ -303,7 +303,7 @@ impl RatchetState {
+ 
+         self.receiver_chains.push(session_structure::Chain {
+             sender_ratchet_key: their_ephemeral.serialize().to_vec(),
+-            sender_ratchet_key_private: vec![],
++            sender_ratchet_key_private: sender_private_key.serialize().to_vec(),
+             chain_key: Some(receiver_chain_key.to_pb()),
+             message_keys: vec![],
+         });

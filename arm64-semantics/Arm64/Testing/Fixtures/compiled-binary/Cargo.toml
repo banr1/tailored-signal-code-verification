@@ -1,0 +1,25 @@
+[package]
+name = "examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# Standalone crate containing the ARM64 assembly and Rust fixture functions and
+# classic algorithms compiled to AArch64 machine code and exported to Lean 4
+# (`Arm64/Testing/Generators/CompiledBinaryFixture.lean`).
+
+[lib]
+crate-type = ["rlib"]
+
+# `panic-handler`: define the `#[panic_handler]` (and `rust_eh_personality`). Crates that call into this one and define
+# their own handler depend on it with `default-features = false`.
+[features]
+default = ["panic-handler"]
+panic-handler = []
+
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 1
+panic = "abort"
+debug = false
+overflow-checks = false

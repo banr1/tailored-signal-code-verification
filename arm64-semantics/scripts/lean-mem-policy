@@ -1,0 +1,173 @@
+#!/bin/sh
+
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Print the adaptive Lean memory cap (`lean -M`, MiB) or Lake build concurrency (`--jobs` / `--threads`)
+# for this host.
+#
+# Default (no flag, or `--mem`):
+#   $LEAN_MAX_MEM_MB                     if set and positive (exported by `lean-sig run`);
+#   12288                                if $CI / $GITHUB_ACTIONS is set, or MemAvailable is unknown;
+#   clamp(0.4 * (MemAvailable - 8 GiB), 12 GiB, 32 GiB) otherwise.
+#
+# `--jobs` / `-j` / `--threads` / `-t`:
+#   In Lake 5.0.0 (`leanprover/lean4:v4.34.0`), `lake` has no `-j` CLI flag; instead `lake`
+#   schedules each `compileLeanModule` subprocess on Lean's `Task.Priority.default` worker pool
+#   (`Lake/Build/Job/Monad.lean:172`), whose concurrency equals `LEAN_NUM_THREADS`.
+#   Computes `clamp(floor((MemAvailable_GiB - 16) / 6), 1, clamp(nproc / 2, 1, 48))`, further
+#   bounded by `max(1, floor((file_nr_free * 3 / 4) / 30000))` when `/proc/sys/fs/file-nr` is
+#   readable (preventing `ENFILE` from Lean 4.34's 5 `mmap`s per module) and capped at 4 in CI,
+#   honoring `$LAKE_JOBS` / `$LEAN_JOBS`.
+#
+# `--env`:
+#   Prints `export LEAN_MAX_MEM_MB=<MiB> LAKE_JOBS=<J> LEAN_NUM_THREADS=<J>` for `eval`.
+#
+# `$LEAN_MEM_AVAILABLE_KB` and `$LEAN_FILE_NR_FREE` override `/proc/meminfo` and
+# `/proc/sys/fs/file-nr` (tests; `LEAN_FILE_NR_FREE=none` disables the file-table cap).
+# Canonical policy: `scripts/lean-mem-policy` (mirrored in `scripts/LakeExports.lean`).
+# Usage:
+#   lake lean Foo.lean -- -M "$(scripts/lean-mem-policy)"
+#   LEAN_NUM_THREADS="$(scripts/lean-mem-policy --jobs)" lake build
+set -eu
+
+mode="mem"
+case "${1:-}" in
+  -h | --help)
+    cat <<'EOF'
+Usage:
+  scripts/lean-mem-policy [--mem | --jobs | --threads | --env]
+
+Print the adaptive Lean per-process memory cap (`lean -M`, in MiB) or Lake build
+concurrency (`LEAN_NUM_THREADS` / `LAKE_JOBS`) for this host.
+
+Flags / Options:
+  --mem                     Print adaptive LEAN_MAX_MEM_MB in MiB (default)
+  -j, --jobs, -t, --threads Print adaptive Lake build concurrency (for LEAN_NUM_THREADS)
+  --env                     Print `export LEAN_MAX_MEM_MB=... LAKE_JOBS=... LEAN_NUM_THREADS=...`
+  -h, --help                Show this help message and exit
+  LEAN_MAX_MEM_MB=<MiB>     Override the computed MiB cap directly
+  LAKE_JOBS=<N>             Override the computed Lake build job concurrency
+  LEAN_MEM_AVAILABLE_KB=<K> Override MemAvailable (KiB) from /proc/meminfo
+  LEAN_FILE_NR_FREE=<F>     Override free file handles (or `none` to skip cap)
+
+Examples:
+  scripts/lean-mem-policy
+  LEAN_NUM_THREADS="$(scripts/lean-mem-policy --jobs)" lake build
+  eval "$(scripts/lean-mem-policy --env)"
+EOF
+    exit 0
+    ;;
+  --mem | "")
+    mode="mem"
+    ;;
+  -j | --jobs | -t | --threads)
+    mode="jobs"
+    ;;
+  --env)
+    mode="env"
+    ;;
+  *)
+    echo "scripts/lean-mem-policy: unknown option: $1" >&2
+    exit 2
+    ;;
+esac
+
+is_ci=0
+for v in "${CI:-}" "${GITHUB_ACTIONS:-}"; do
+  case "$v" in '' | false | 0) ;; *) is_ci=1 ;; esac
+done
+
+avail=${LEAN_MEM_AVAILABLE_KB:-$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)}
+
+compute_mem_mb() {
+  case "${LEAN_MAX_MEM_MB:-}" in
+    '' | *[!0-9]* | 0) ;;
+    *) echo "$LEAN_MAX_MEM_MB"; return ;;
+  esac
+  if [ "$is_ci" -eq 1 ]; then
+    echo 12288
+    return
+  fi
+  case "$avail" in
+    '' | *[!0-9]*) echo 12288; return ;;
+  esac
+  awk -v a="$avail" 'BEGIN {
+    r = 8 * 1024 * 1024; s = a > r ? int((a - r) * 4 / 10 / 1024) : 0
+    if (s < 12288) s = 12288; if (s > 32768) s = 32768; print s }'
+}
+
+compute_jobs() {
+  caller_threads=""
+  if [ -n "${LEAN_NUM_THREADS:-}" ] && [ "${LEAN_NUM_THREADS:-}" != "${LEAN_SLOT_SET_NUM_THREADS:-}" ]; then
+    caller_threads="$LEAN_NUM_THREADS"
+  fi
+  for ov in "${LAKE_JOBS:-}" "${LEAN_JOBS:-}" "$caller_threads"; do
+    case "$ov" in
+      '' | *[!0-9]* | 0) ;;
+      *) echo "$ov"; return ;;
+    esac
+  done
+  nproc_val=${PRE_PUSH_NPROC:-${NPROC:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}}
+  case "$nproc_val" in '' | *[!0-9]* | 0) nproc_val=4 ;; esac
+  cpu_cap=$(( nproc_val / 2 ))
+  if [ "$cpu_cap" -lt 1 ]; then cpu_cap=1; fi
+  if [ "$cpu_cap" -gt 48 ]; then cpu_cap=48; fi
+  if [ "$is_ci" -eq 1 ]; then
+    if [ "$cpu_cap" -gt 4 ]; then echo 4; else echo "$cpu_cap"; fi
+    return
+  fi
+  case "$avail" in
+    '' | *[!0-9]*)
+      if [ "$cpu_cap" -gt 4 ]; then echo 4; else echo "$cpu_cap"; fi
+      return
+      ;;
+  esac
+  fd_free=""
+  case "${LEAN_FILE_NR_FREE:-}" in
+    none | NONE | unlimited | UNLIMITED) fd_free="" ;;
+    '' | *[!0-9]*)
+      if [ -z "${LEAN_FILE_NR_FREE:-}" ] && [ -r /proc/sys/fs/file-nr ]; then
+        fd_free=$(awk '{ if (NF >= 3) { f = $3 - $1; printf "%.0f\n", (f > 0 ? f : 0) } }' /proc/sys/fs/file-nr 2>/dev/null || true)
+      fi
+      ;;
+    *) fd_free="$LEAN_FILE_NR_FREE" ;;
+  esac
+  awk -v a="$avail" -v c="$cpu_cap" -v f="$fd_free" 'BEGIN {
+    gib = int(a / (1024 * 1024))
+    mj = gib > 16 ? int((gib - 16) / 6) : 1
+    if (mj < 1) mj = 1
+    if (mj > c) mj = c
+    if (f != "" && f ~ /^[0-9]+$/) {
+      fdj = int((f + 0.0) * 0.75 / 30000.0)
+      if (fdj < 1) fdj = 1
+      if (mj > fdj) mj = fdj
+    }
+    print mj
+  }'
+}
+
+case "$mode" in
+  mem)
+    compute_mem_mb
+    ;;
+  jobs)
+    compute_jobs
+    ;;
+  env)
+    mem_val=$(compute_mem_mb)
+    jobs_val=$(compute_jobs)
+    printf 'export LEAN_MAX_MEM_MB=%s\nexport LAKE_JOBS=%s\nexport LEAN_NUM_THREADS=%s\n' "$mem_val" "$jobs_val" "$jobs_val"
+    ;;
+esac

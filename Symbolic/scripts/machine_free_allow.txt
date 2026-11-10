@@ -1,0 +1,93 @@
+# Allow-list of constants for `Symbolic/scripts/machine_free_check.py`.
+#
+# Nothing may be added without careful review and sign-off.
+# Format per entry (one per line; `#` at start of line begins a comment):
+#   <Constant.Name> : <non-empty one-line reason>
+#
+# Scope: the trusted symbolic CLI statement modules
+#   Symbolic.Specifications.Refinement.{Statement,CliSetup,RefinementPreservation} and
+#   Symbolic.Specifications.Security.AsmSecure
+# (`Refinement.ElfBinding` is ELF-level by design and is not claimed machine-free).
+# Every constant below is defined in `arm64-semantics` (denied `Arm64.*`) and was signed off one by
+# one, against its definition read at engine submodule c2ef2f44e (ISA/State.lean, Process/Types.lean,
+# Process/Loader.lean, Object/Reloc.lean; Arm64.Obj.pageSize is defined in Object/Reloc.lean).
+#
+# Walk the sign-off assumed: types and def/opaque/theorem values; inductive -> constructors and its
+# mutual block; constructor -> inductive; recursor -> rules and block; a raw `Expr.proj` counts as a
+# use of that projection; the `match_` / `proof_` / `below` auxiliaries of the four modules are
+# roots too; the walk descends into allowed constants, and the 60 below are closed under it.
+#
+# Verdicts:
+#   [SIGN]  pure file-system / process-input data and functions.
+#   [INERT] only a default value that is built but never read (the default `init : ProcessInit` field
+#           of `ProcessInputs`, which holds the default oracle, auxv, stack and physMemAvail fields). This is
+#           enforced because no projection, `casesOn` or recursor of these types is on the list, so
+#           any read of them FAILs.
+# Never add: ProcessInputs.{argv,envp,execfn,init}, the reducible forwarders
+# ProcessInputs.{auxv,stackTop,stackSize,physMemAvail,oracle} (= `i.init.<field>`), ProcessInputs.rec / casesOn,
+# any ProcessInit.* / Oracle.* / AuxvConfig.* / Timespec.* projection, recursor or casesOn (e.g.
+# ProcessInit.{auxv,stackTop,stackSize,physMemAvail,oracle,rec,casesOn}); Arm64.State, its
+# projections and any other register, memory or CPU constant of ISA.State; ElfImage.loadState /
+# loadElf or any other ELF-loading constant of Process.Loader.
+# Re-check every entry on each engine submodule bump.
+
+Arm64.FsEntry : [SIGN] inode payload (file bytes | dir); pure FS data
+Arm64.FsEntry.file : [SIGN] ctor of FsEntry
+Arm64.FsEntry.dir : [SIGN] ctor of FsEntry
+Arm64.FsEntry.rec : [SIGN] kernel recursor of FsEntry (fsView match)
+Arm64.FsEntry.casesOn : [SIGN] derived from FsEntry.rec
+Arm64.FsEntry.ctorIdx : [SIGN] derived ctor index (fsView.match_1)
+Arm64.FsPath : [SIGN] abbrev List String (canonical relative path)
+Arm64.FsPath.nonEmptyPrefixes : [SIGN] pure list prefixes; used by initFsState
+Arm64.FsPath.nonEmptyPrefixes._f : [SIGN] structural-recursion aux of nonEmptyPrefixes
+Arm64.FsPath.nonEmptyPrefixes.match_1 : [SIGN] match aux of nonEmptyPrefixes
+Arm64.normalizePath : [SIGN] pure: drop empty and "." segments of splitSlash
+Arm64.splitSlash : [SIGN] pure split on '/'
+Arm64.splitSlash.go : [SIGN] local recursive helper of splitSlash
+Arm64.splitSlash.go._f : [SIGN] structural-recursion aux of splitSlash.go
+Arm64.FsState : [SIGN] structure entries/stdin/fds; pure FS data
+Arm64.FsState.mk : [SIGN] ctor of FsState
+Arm64.FsState.entries : [SIGN] projection; read by getEntry, written by setEntry
+Arm64.FsState.stdin : [SIGN] projection; set by initFsState
+Arm64.FsState.fds : [SIGN] projection; written by setFd in initFsState (fsView never reads fds)
+Arm64.FsState.getEntry : [SIGN] pure lookup (CWD always dir)
+Arm64.FsState.setEntry : [SIGN] pure functional update of entries
+Arm64.FsState.files : [SIGN] lookup under normalizePath
+Arm64.FsState.setFile : [SIGN] setEntry under normalizePath
+Arm64.FsState.setFd : [SIGN] pure functional update of the fd table
+Arm64.FdEntry : [SIGN] fd-table record (path, accMode, append, cloexec, offset, kind)
+Arm64.FdEntry.mk : [SIGN] ctor; initFsState builds fds 0/1/2
+Arm64.FdKind : [SIGN] fd backend tag
+Arm64.FdKind.localFile : [SIGN] ctor of FdKind
+Arm64.FdKind.localDir : [SIGN] ctor of FdKind (reached via the inductive's ctor list)
+Arm64.FdKind.stdio : [SIGN] ctor of FdKind (fds 0/1/2)
+Arm64.FdKind.custom : [SIGN] ctor of FdKind; carries a Nat tag only
+Arm64.FdAccessMode : [SIGN] open access mode
+Arm64.FdAccessMode.rdonly : [SIGN] ctor (fd 0)
+Arm64.FdAccessMode.wronly : [SIGN] ctor (fds 1/2)
+Arm64.FdAccessMode.rdwr : [SIGN] ctor (reached via the inductive's ctor list)
+Arm64.Process.ProcessInputs : [SIGN] input record; the statement fills only files (filesOf builds {files := files}); disclose that the type carries an unused `init : ProcessInit` field (oracle/auxv/stack/physMemAvail defaults)
+Arm64.Process.ProcessInputs.mk : [SIGN] struct literal in filesOf; its type mentions ProcessInit, hence that entry (and, via ProcessInit.mk, Oracle/AuxvConfig)
+Arm64.Process.ProcessInputs.files : [SIGN] projection read by initFsState
+Arm64.Process.ProcessInputs.dirs : [SIGN] projection read by initFsState
+Arm64.Process.ProcessInputs.stdin : [SIGN] projection read by initFsState
+Arm64.Process.bytesOfString : [SIGN] pure String->bytes (low 8 bits); from the default argv ["prog"] in the literal
+Arm64.Process.initFsState : [SIGN] pure fold building FsState from dirs/files/stdin + stdio fds 0/1/2; NOT ElfImage.loadState (unreached)
+Arm64.Process.initFsState.match_1 : [SIGN] match aux (pair destructuring)
+Arm64.Oracle : [INERT] kernel/CPU nondeterminism oracle (incl. exclFails); only the type of a default field
+Arm64.Oracle.mk : [INERT] ctor in defaultOracle's value
+Arm64.Timespec : [INERT] (sec, nsec) record; only as Oracle.clockGettime's field type
+Arm64.Timespec.mk : [INERT] ctor in the default clockGettime
+Arm64.Process.ProcessInit : [INERT] loader init record (auxv, stackTop, stackSize, physMemAvail, oracle); only the type of the default `init` field of ProcessInputs
+Arm64.Process.ProcessInit.mk : [INERT] ctor of the default init value {} = mk {} defaultStackTop defaultStackSize (2 ^ 30) defaultOracle; its type mentions AuxvConfig/Oracle (physMemAvail : Nat adds no Arm64 constant)
+Arm64.Process.defaultOracle : [INERT] default mmap bases 0x6000_0000_0000 + 64 KiB slots; never read in the cone
+Arm64.Process.defaultOracle._proof_1 : [INERT] compiler proof aux of defaultOracle (Prop; walk descends into it)
+Arm64.Process.AuxvConfig : [INERT] loader auxv config (hwcap, uid, AT_RANDOM bytes); only the type of a default field
+Arm64.Process.AuxvConfig.mk : [INERT] ctor of the default auxv value
+Arm64.Process.defaultStackTop : [INERT] stack-layout constant 0x0000_7fff_ffff_0000; default field, never read
+Arm64.Process.defaultStackSize : [INERT] 2048 * pageSize; default field, never read
+Arm64.Obj.pageSize : [INERT] 4096; reached only via defaultStackSize / defaultOracle
+Arm64.splitSlash.go.match_1 : [SIGN] match aux of splitSlash.go ([] | '/' :: cs | c :: cs), State.lean:309-312 @engine c2ef2f44e; reached via splitSlash.go._f
+Arm64.MAX_LFS_FILESIZE : [SIGN] pure Nat bound 2 ^ 63 - 1, State.lean:300 @engine c2ef2f44e; used by FilesVisible
+Arm64.hasLeadingSlash : [SIGN] pure path.toList.head? == some '/', State.lean:316-317 @engine c2ef2f44e; used by FilesVisible
+Arm64.hasDotDot : [SIGN] pure (splitSlash path).contains "..", State.lean:320-321 @engine c2ef2f44e; used by FilesVisible

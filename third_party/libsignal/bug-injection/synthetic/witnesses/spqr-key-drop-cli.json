@@ -1,0 +1,10 @@
+{
+  "comment": "Synthetic mutant for Issue 1 (SPQR message-key mix dropped in MessageKeyGenerator::generate_keys): Alice initiates from Bob's honest bundle and sends her first pre-key message under a key derived without pqr_key; Bob's recv (or mutant's symmetric derivation) diverges from clean v0.105.4.",
+  "setup_seed": 5002,
+  "rng_seed": 50020,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"hex": "0000000000000000000000000000000000000000000000000000000000000000"}},
+    {"entry": "recv", "who": 1, "b": {"message_of": 1}}
+  ]
+}

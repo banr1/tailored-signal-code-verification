@@ -1,0 +1,8 @@
+[package]
+name = "isa-oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Common AArch64 ISA oracle trait, architectural state, and differential comparison policy"
+
+[dependencies]

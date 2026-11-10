@@ -1,0 +1,21 @@
+{
+  "comment": "Cheval et al. trace B.1-B.4, SPQR index 1 variant (#450's cheval26-weak-state-idx1), on the libsignal-cli CLI: Alice sends two S1 pre-key messages; Bob first receives the second (skipping counter 0 / SPQR index 1, whose keys he stores in his S1 session file); Alice clears her session file and initiates S2; Bob then receives S1's FIRST pre-key message under S2's PQXDH header (base key: field 2, 0x12 0x21 0x05; Kyber ciphertext: field 8, 0x42 0xa1 0x0c 0x08), so the spliced inner message carries SPQR index 1.",
+  "setup_seed": 23209,
+  "rng_seed": 43,
+  "calls": [
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "first"}},
+    {"entry": "send", "who": 0, "b": {"utf8": "second"}},
+    {"entry": "recv", "who": 1, "b": {"message_of": 2}},
+    {"entry": "clear", "who": 0},
+    {"entry": "init", "b": {"honest_bundle": true}},
+    {"entry": "send", "who": 0, "b": {"utf8": "other"}},
+    {"entry": "recv", "who": 1, "b": {
+      "replace": {
+        "replace": {"message_of": 1},
+        "find": {"slice": {"message_of": 1}, "after": {"hex": "122105"}, "offset": 3, "len": 32},
+        "with": {"slice": {"message_of": 6}, "after": {"hex": "122105"}, "offset": 3, "len": 32}},
+      "find": {"slice": {"message_of": 1}, "after": {"hex": "42a10c08"}, "offset": 4, "len": 1568},
+      "with": {"slice": {"message_of": 6}, "after": {"hex": "42a10c08"}, "offset": 4, "len": 1568}}}
+  ]
+}

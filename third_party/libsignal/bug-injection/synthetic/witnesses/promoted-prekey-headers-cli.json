@@ -1,0 +1,56 @@
+{
+  "comment": "Synthetic mutant for promoted PreKeySignalMessage outer header / identity-pinning bypass: Alice initiates and sends two PreKeySignalMessages ('first', 'second'); Bob receives 'second' (establishing session on ek_A, pinning IK_A, and caching 'first's skipped key); an active attacker replaces the outer identity_key (field 3: 0x1a 0x21 0x05) on 'first' with a foreign Curve25519 public key and delivers it to Bob.",
+  "setup_seed": 23209,
+  "rng_seed": 43,
+  "calls": [
+    {
+      "entry": "init",
+      "b": {
+        "honest_bundle": true
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "first"
+      }
+    },
+    {
+      "entry": "send",
+      "who": 0,
+      "b": {
+        "utf8": "second"
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "message_of": 2
+      }
+    },
+    {
+      "entry": "recv",
+      "who": 1,
+      "b": {
+        "replace": {
+          "message_of": 1
+        },
+        "find": {
+          "slice": {
+            "message_of": 1
+          },
+          "after": {
+            "hex": "1a2105"
+          },
+          "offset": 3,
+          "len": 32
+        },
+        "with": {
+          "hex": "4242424242424242424242424242424242424242424242424242424242424202"
+        }
+      }
+    }
+  ]
+}

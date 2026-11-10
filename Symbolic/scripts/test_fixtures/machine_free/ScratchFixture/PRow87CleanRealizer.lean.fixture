@@ -1,0 +1,22 @@
+import Lean
+import ScratchFixture.PRow87DeniedRealizer
+
+namespace ScratchFixture.PRow87CleanRealizer
+
+open Lean Meta in
+#eval show MetaM Unit from do
+  unless (← getEnv).contains ``ScratchFixture.PRow87DeniedRealizer.deniedParentThm do
+    throwError "missing deniedParentThm"
+  let trueConst := mkConst ``True
+  let eqTrueTrue ← mkEq trueConst trueConst
+  let reflTrue ← mkEqRefl trueConst
+  -- (b) Denied parent (`deniedParentThm`), realized in a clean module with pure type/value:
+  -- redirects to denied parent -> tainted.
+  addDecl <| Declaration.thmDecl {
+    name := `ScratchFixture.PRow87DeniedRealizer.deniedParentThm._simp_8702
+    levelParams := []
+    type := eqTrueTrue
+    value := reflTrue
+  }
+
+end ScratchFixture.PRow87CleanRealizer

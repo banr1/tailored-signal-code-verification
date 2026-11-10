@@ -1,0 +1,27 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module -- shake: keep-all
+
+public import LibsignalBinary.Proofs.Cli.E2E.Pqxdh.ResponderClosure.Kits.StageP1Ok
+public import LibsignalBinary.Proofs.Cli.E2E.Pqxdh.ResponderClosure.Kits.StageP1Untrusted
+public import LibsignalBinary.Proofs.Cli.E2E.Pqxdh.ResponderClosure.Kits.StageP1OkTrap
+public import LibsignalBinary.Proofs.Cli.E2E.Pqxdh.ResponderClosure.Kits.StageP1UntrustedOkTrap
+
+/-!
+# ResponderClosure Stage P1 on Store Kits
+
+Umbrella module re-exporting Stage P1 store-kit stack budgets, coroutine `SessionRecord` layouts,
+and Stage P1 theorems (`stageP1_load_ok_kit`, `stageP1_trust_call_wp_kit`, `stageP1_trust_ok_kit`,
+`stageP1_ok_kit`, `stageP1_untrusted_err_ok_kit`, and `stageP1_untrusted_ok_kit`).
+-/
+
+@[expose] public section
+
+set_option autoImplicit false

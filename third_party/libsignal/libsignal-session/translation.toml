@@ -1,0 +1,210 @@
+# Translation configuration for `third_party/libsignal/libsignal-session` (`rust-obj2lean`), the rung 7b
+# image (`docs/LIBSIGNAL_SESSION_7B.md`).
+#
+# Objects, in load order:
+#   1. the WHOLE `libsignal-protocol` crate (v0.105.4, compiled with this crate's release profile:
+#      overflow checks on as upstream), so every non-generic upstream session method is in the
+#      image at its compiled bytes (`RatchetState::consume_message_key`, `find_receiver_chain_*`,
+#      `ChainKey::*`, `RootKey::create_chain`, `crypto::hmac_sha256`, ...);
+#   2. the wrapper `libsignal-session` (the generic session code monomorphized at `HookRng`,
+#      for stages 2-3);
+#   3. the WHOLE `libsignal-core` crate (`libsignal_core::curve`: key (de)serialization, X25519
+#      agreement, ...), verified where reached, not hooked;
+#   4. the WHOLE `bytes` crate (prost's `bytes::merge` builds a `Bytes` with `Bytes::from(Vec<u8>)`
+#      and drops it through its vtable);
+#   5. the WHOLE `uuid` crate (v1.26.1: `Uuid::try_parse`, reached from
+#      `ServiceId::parse_from_service_id_string`), verified against a readable trusted model
+#      (`uuidTryParseSpec`), not hooked;
+#   6. the WHOLE `prost` crate (`decode_varint_slow`, `DecodeError::{from,push}`, ...);
+#   7. the WHOLE `spqr` crate (v1.6.0: `spqr::{send,recv,decode_state,...}`), so SPQR on the
+#      empty state runs at its compiled bytes;
+#   8. the WHOLE `libsignal-cli-ratchet` crate (`cli/ratchet/src/lib.rs`): the `libsignal-cli`
+#      CLI's `message_encrypt` / `message_decrypt_signal` calls, compiled as the wrapper's
+#      `session_message_{encrypt,decrypt_signal}` up to relocations;
+#   9. the WHOLE `libsignal-cli-handshake` crate (`cli/handshake/src/lib.rs`): the CLI's
+#      `process_prekey_bundle` / `message_decrypt_prekey` calls;
+#  10. the WHOLE `libsignal-cli` crate (`cli/src/`): the CLI itself (`main`, its `run` and the
+#      file-backed stores). Its process I/O, the crate `libsignal-cli-io` (`cli/io/`), is not part
+#      of this image: it is translated separately by `cli/io/translation.toml`
+#      (`SignalSessionIoPlacedObj`), and appears here as extern stubs modeled by the `CliRun` hooks;
+#  11. sysroot objects: named monomorphizations from the pinned toolchain's prebuilt
+#      `aarch64-unknown-linux-gnu` sysroot (`alloc` `RawVec<u8>::grow_one` and `std`
+#      `RawVec<Vec<u8>>::grow_one`, with their CGU-local `RawVecInner::finish_grow` callees;
+#      `alloc` cgu.0 member sha256 `5870555258a9990c3674ee267fe8ca4d7992200156944b25d8effdf7a230726b`,
+#      `std` cgu.0 member sha256 `d5f890bc180a13054d49f8dfd74afb16a1bd997c3eeea009ceda7234cd2b197b`),
+#      verified where reached, not hooked.
+# `libsignal-core`, `bytes`, `uuid`, `prost`, `spqr`, the three CLI crates, and the sysroot objects
+# come after the wrapper, so the protocol and wrapper code keep their offsets.
+# Everything else (`sha2::compress256`, X25519, the `__rust_*` allocator entrypoints, `mem*`, `log`,
+# libcrux ML-KEM and HMAC, ...) — excluding the translated `RawVec::grow_one` /
+# `RawVecInner::finish_grow` monomorphizations above — is an extern stub whose behaviour is a hook
+# of the specifications (`LibsignalBinary/Specifications/LibsignalSession*.lean`).
+#
+# A separate image from `libsignal-mono` / `-hmac` / `-kdf` / `-rootkdf`, so that the offsets the
+# merged proofs hard-code do not move.
+
+# Whole-crate extraction: `libsignal-core`, `bytes`, `uuid`, `prost`, `spqr`, and the CLI crates
+# follow `libsignal-protocol` and `libsignal-session`.
+crates = ["libsignal-protocol", "libsignal-session", "libsignal-core", "bytes", "uuid", "prost", "spqr",
+    "libsignal-cli-ratchet", "libsignal-cli-handshake", "libsignal-cli"]
+obj_name = "libsignalSession"
+namespace_prefix = "CryptoVerification"
+page_separate_data = true
+legacy_linked_image = true
+hashed_inputs = [
+    "translation.toml", "Cargo.toml", "Cargo.lock", "src/lib.rs",
+    "cli/Cargo.toml", "cli/src/lib.rs", "cli/src/main.rs", "cli/src/coins.rs",
+    "cli/src/public.rs", "cli/src/stores.rs", "cli/io/Cargo.toml", "cli/io/src/lib.rs",
+    "cli/ratchet/Cargo.toml", "cli/ratchet/src/lib.rs", "cli/handshake/Cargo.toml", "cli/handshake/src/lib.rs",
+]
+# Portable software backends (as the other libsignal images): no run-time CPU feature detection,
+# no ARMv8 AES / SHA-2 instructions; `sha2::sha256::compress256` stays an extern stub (the rung 2/4
+# SHA-256 compression hook).
+rustflags = ["--cfg", 'aes_backend="soft"', "--cfg", 'sha2_backend="soft"']
+license_header = [
+    "Machine code in this file is compiled from the Signal Messenger `libsignal` project",
+    "(https://github.com/signalapp/libsignal) at tag v0.105.4 (`libsignal-protocol` and",
+    "`libsignal-core`), via the thin wrapper crate `third_party/libsignal/libsignal-session`. It is",
+    "therefore a derived work of libsignal:",
+    "",
+    "  Copyright 2020-2026 Signal Messenger, LLC.",
+    "  SPDX-License-Identifier: AGPL-3.0-only",
+    "",
+    "The wrapper crates copy no upstream source; see `third_party/libsignal/README.md`.",
+]
+
+[upstream]
+name = "libsignal"
+repo_url = "https://github.com/signalapp/libsignal"
+tag = "v0.105.4"
+vendor_symlink = "vendor/libsignal"
+probe_path = "rust/protocol/Cargo.toml"
+env_var = "LIBSIGNAL_SRC"
+no_clone_env_var = "LIBSIGNAL_NO_CLONE"
+home_subdir = "sw/libsignal"
+
+[placed]
+multi = true
+emit_extracted_obj = true
+exports = [
+    "main",
+    "session_message_encrypt",
+    "session_message_decrypt_signal",
+    "session_signal_message_parse",
+]
+
+# Prebuilt `aarch64-unknown-linux-gnu` sysroot monomorphizations (pinned `rust-toolchain.toml`
+# 1.98.1): Row 22 (`alloc` cgu.0 sha256 `5870555258a9990c3674ee267fe8ca4d7992200156944b25d8effdf7a230726b`)
+# and Row 23 (`std` cgu.0 sha256 `d5f890bc180a13054d49f8dfd74afb16a1bd997c3eeea009ceda7234cd2b197b`).
+# `root_section_closure` follows `STB_LOCAL` relocations, pulling in each CGU's local
+# `RawVecInner::finish_grow` alongside `grow_one` (4 blocks total, 0 new externs).
+[[sysroot_objects]]
+crate = "alloc"
+roots = [
+    "<alloc::raw_vec::RawVec<u8>>::grow_one",
+]
+
+[[sysroot_objects]]
+crate = "std"
+roots = [
+    "<alloc::raw_vec::RawVec<alloc::vec::Vec<u8>>>::grow_one",
+]
+
+[[targets]]
+name = "libsignal-session"
+lean_file = "GeneratedLean/LibsignalSession.lean"
+sub_namespace = "LibsignalSession"
+prog_name = "libsignalSessionBin"
+title = "`third_party/libsignal/libsignal-session` (libsignal v0.105.4 session code, rung 7b)"
+# Fetch lemmas only for the stage-1 call closure of `consume_message_key`
+# (`docs/LIBSIGNAL_SESSION_7B.md` §3): anchored regexes on the full demangled names (`[`, `]`
+# escaped). Stage 2 has its own target below (same image), so this lemma module stays at the
+# stage-1 size (`docs/LIBSIGNAL_SESSION_7B_STAGE2.md` §8.4).
+lemma_allowlist = [
+    '<libsignal_protocol::double_ratchet::RatchetState>::consume_message_key',
+    '<libsignal_protocol::double_ratchet::RatchetState>::find_receiver_chain_index',
+    '<libsignal_protocol::double_ratchet::RatchetState>::find_receiver_chain_key',
+    '<libsignal_protocol::ratchet::keys::ChainKey>::next_chain_key',
+    '<libsignal_protocol::ratchet::keys::ChainKey>::message_keys',
+    'libsignal_protocol::crypto::hmac_sha256',
+    # `[local#1]`: libsignal-protocol's copy (`libsignal-e2e`'s HKDF has its own, `[local#2]`).
+    '<hmac::Hmac<sha2::Sha256> as crypto_common::KeyInit>::new_from_slice \[local#1\]',
+    '<alloc::raw_vec::RawVec<libsignal_protocol::proto::storage::session_structure::chain::MessageKey>>::grow_one',
+    '<alloc::raw_vec::RawVecInner>::finish_grow \[local#1\]',
+    '<libsignal_core::curve::PublicKey as core::cmp::PartialEq>::eq',
+    '<\[u8\] as subtle::ConstantTimeEq>::ct_eq',
+    '<libsignal_core::curve::PublicKey>::deserialize',
+]
+
+# Stage 2 (`docs/LIBSIGNAL_SESSION_7B_STAGE2.md`): a second lemma module on the SAME image
+# (`LibsignalSessionCode` / `LibsignalSessionObj` are shared),
+# so stage-1 modules do not pay for the stage-2 lemmas (§8.4). Fetch lemmas for the stage-2 closure
+# (§1) and the `bytes` functions that prost's `bytes::merge` reaches through `Bytes::from` and the
+# vtable drop: anchored regexes on the full demangled names (regex metacharacters escaped). Stage 3
+# widens this list.
+[[targets]]
+name = "libsignal-triple-ratchet"
+lean_file = "GeneratedLean/LibsignalTripleRatchet.lean"
+sub_namespace = "LibsignalTripleRatchet"
+prog_name = "libsignalTripleRatchetBin"
+title = "`third_party/libsignal/libsignal-session` (libsignal v0.105.4 session code, rung 7b stage 2)"
+# Split the stage-2 lemmas into 8 modules that Lake checks in parallel (rust-obj2lean `lemma_shards`).
+lemma_shards = 8
+lemma_allowlist = [
+    # Stage 2 (`docs/LIBSIGNAL_SESSION_7B_STAGE2.md` §1): the 41 functions of the closure.
+    'libsignal_protocol::session_management::try_decrypt_with_state::<libsignal_session::HookRng>',
+    '<libsignal_protocol::protocol::SignalMessage>::new',
+    '<libsignal_protocol::protocol::SignalMessage as core::convert::TryFrom<&\[u8\]>>::try_from',
+    '<libsignal_protocol::triple_ratchet::TripleRatchet>::from_session_state',
+    '<libsignal_protocol::triple_ratchet::OutgoingTripleRatchet>::from_session_state',
+    '<libsignal_protocol::protocol::SignalMessage>::compute_mac',
+    '<hkdf::GenericHkdf<hmac::Hmac<sha2::Sha256>>>::expand_multi_info',
+    'prost::encoding::bytes::merge::<alloc::vec::Vec<u8>, &mut &\[u8\]> \[local#1\]',
+    'prost::encoding::varint::encode_varint::<alloc::vec::Vec<u8>> \[local#1\]',
+    '<libsignal_protocol::protocol::SignalMessage>::verify_mac_with_addresses',
+    '<libsignal_protocol::triple_ratchet::OutgoingTripleRatchet>::encrypt::<libsignal_session::HookRng>',
+    'prost::encoding::skip_field::<&mut &\[u8\]> \[local#1\]',
+    '<libsignal_protocol::triple_ratchet::TripleRatchet>::apply_to_session_state',
+    'prost::encoding::varint::decode_varint_slice',
+    '<hkdf::GenericHkdf<hmac::Hmac<sha2::Sha256>>>::extract',
+    '<libsignal_protocol::ratchet::keys::RootKey>::create_chain',
+    # `[local#1]`: libsignal-protocol's copy (`libsignal-e2e`'s HKDF has its own, `[local#2]`).
+    '<hmac::Hmac<sha2::Sha256> as digest::FixedOutput>::finalize_fixed \[local#1\]',
+    '<libsignal_protocol::ratchet::keys::MessageKeyGenerator>::generate_keys',
+    '<libsignal_protocol::state::session::SessionState>::remote_identity_key',
+    '<libsignal_protocol::proto::wire::SignalMessage as prost::message::Message>::encoded_len',
+    '<libsignal_protocol::triple_ratchet::OutgoingTripleRatchet>::apply_to_session_state',
+    'prost::encoding::int32::merge::<&mut &\[u8\]>',
+    '<libsignal_protocol::state::session::SessionState>::local_identity_key',
+    'core::ptr::drop_glue::<libsignal_protocol::proto::storage::session_structure::Chain>',
+    '<libsignal_protocol::protocol::SignalMessage>::serialize_addresses',
+    '<libsignal_core::curve::PrivateKey>::calculate_agreement',
+    '<libsignal_protocol::identity_key::IdentityKey>::is_same_account',
+    'core::ptr::drop_glue::<alloc::vec::Vec<libsignal_protocol::proto::storage::session_structure::chain::MessageKey>>',
+    'core::ptr::drop_glue::<libsignal_protocol::error::SignalProtocolError>',
+    'core::ptr::drop_glue::<alloc::vec::Vec<libsignal_protocol::proto::storage::session_structure::Chain>>',
+    'core::ptr::drop_glue::<prost::error::DecodeError>',
+    '<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> \[local#1\]',
+    '<alloc::vec::Vec<u8>>::into_boxed_slice',
+    '<alloc::boxed::Box<\[u8\]>>::try_clone_from_ref_in',
+    '<alloc::raw_vec::RawVec<libsignal_protocol::proto::storage::session_structure::Chain>>::grow_one',
+    '<libsignal_protocol::ratchet::keys::ChainKey>::to_pb',
+    'log::__private_api::log_impl::<log::__private_api::GlobalLogger> \[local#2\]',
+    'log::__private_api::log_impl::<log::__private_api::GlobalLogger> \[local#1\]',
+    '<libsignal_protocol::state::session::SessionState>::clear_unacknowledged_pre_key_message',
+    '<libsignal_core::curve::PublicKey>::serialize',
+    '<libsignal_core::curve::curve25519::PrivateKey>::derive_public_key_bytes',
+    # Stage 2, `bytes` (whole crate above): `From<Vec<u8>>` and the drops of the three vtables
+    # it can pick for an exact-capacity `Vec` (`STATIC_VTABLE` for an empty one).
+    '<bytes::bytes::Bytes as core::convert::From<alloc::vec::Vec<u8>>>::from',
+    'bytes::bytes::promotable_even_drop',
+    'bytes::bytes::promotable_odd_drop',
+    'bytes::bytes::static_drop',
+]
+
+[[sysroot_objects]]
+crate = "alloc"
+name = "alloc_string_clone"
+roots = [
+    "<alloc::string::String as core::clone::Clone>::clone",
+]

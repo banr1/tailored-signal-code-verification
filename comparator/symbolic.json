@@ -1,0 +1,24 @@
+{
+  "challenge_module": "ComparatorChallenge.Symbolic",
+  "solution_module": "ComparatorSolution.Symbolic",
+  "theorem_names": [
+    "Proven.ForwardSecrecy.forward_secrecy",
+    "Proven.PostCompromiseSecurity.post_compromise_security",
+    "Proven.Handshake.alice_initiator_secrecy",
+    "Proven.Handshake.bob_responder_secrecy",
+    "Proven.Handshake.authentication",
+    "Proven.Handshake.peer_authentication",
+    "Proven.Handshake.handshake_forward_secrecy",
+    "Proven.Handshake.kci_resistance",
+    "Proven.Handshake.session_independence",
+    "Proven.Handshake.hndl_resistance",
+    "Proven.RefinementPreservation.comp_refinement_preservation_cli",
+    "Proven.Refinement.comp_refines_cli_placed",
+    "Proven.Security.signal_session_secure_placed",
+    "Proven.Security.libsignal_cli_elf_linked_in",
+    "Proven.Security.libsignal_cli_elf_mallocng_linked_in",
+    "Proven.Security.libsignal_cli_labels_from_objects"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": false
+}

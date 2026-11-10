@@ -1,0 +1,12 @@
+--- a/rust/protocol/src/ratchet/keys.rs
++++ b/rust/protocol/src/ratchet/keys.rs
+@@ -32,7 +32,8 @@ impl MessageKeyGenerator {
+     pub(crate) fn generate_keys(self, pqr_key: spqr::MessageKey) -> MessageKeys {
+         match self {
+             Self::Seed((seed, counter)) => {
+-                MessageKeys::derive_keys(&seed, pqr_key.as_deref(), counter)
++                let _ = &pqr_key;
++                MessageKeys::derive_keys(&seed, None, counter)
+             }
+             Self::Keys(k) => {
+                 // PQR keys should only be set for newer sessions, and in

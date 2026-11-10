@@ -1,0 +1,8 @@
+import ScratchFixture.P3Wrapper
+
+namespace ScratchFixture.P3Root
+
+theorem p3_uses_part_a_via_wrapper : ScratchFixture.P3Wrapper.WrappedStatePred :=
+  fun _ => rfl
+
+end ScratchFixture.P3Root

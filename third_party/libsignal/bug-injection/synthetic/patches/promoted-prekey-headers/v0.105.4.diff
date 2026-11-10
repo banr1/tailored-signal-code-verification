@@ -1,0 +1,21 @@
+diff --git a/rust/protocol/src/session.rs b/rust/protocol/src/session.rs
+index 695d672..e0a5963 100644
+--- a/rust/protocol/src/session.rs
++++ b/rust/protocol/src/session.rs
+@@ -55,6 +55,16 @@ pub async fn process_prekey<'a>(
+ ) -> Result<(Option<PreKeysUsed>, IdentityToSave<'a>)> {
+     let their_identity_key = message.identity_key();
+ 
++    if session_record.promote_matching_session(
++        message.message_version() as u32,
++        &message.base_key().serialize(),
++    )? {
++        return Ok((None, IdentityToSave {
++            remote_address,
++            their_identity_key,
++        }));
++    }
++
+     if !identity_store
+         .is_trusted_identity(remote_address, their_identity_key, Direction::Receiving)
+         .await?

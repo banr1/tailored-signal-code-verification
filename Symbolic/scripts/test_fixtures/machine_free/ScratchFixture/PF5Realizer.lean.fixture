@@ -1,0 +1,25 @@
+import Lean
+import ScratchFixture.PF5DeniedParent
+import Arm64.Trusted.ISA.State
+
+namespace ScratchFixture.PF5Realizer
+
+open Lean Meta in
+#eval show MetaM Unit from do
+  realizeConst ``ScratchFixture.PF5DeniedParent.parentFn `ScratchFixture.PF5DeniedParent.parentFn.eq_1 do
+    let fnZero := mkApp (mkConst ``ScratchFixture.PF5DeniedParent.parentFn) (mkConst ``Nat.zero)
+    let eqTy ← mkEq fnZero fnZero
+    let reflPf ← mkEqRefl fnZero
+    let stateType := mkConst ``Arm64.State
+    let sortType := mkSort (Level.succ Level.zero)
+    let val := Expr.letE `_pf5MachineWitness sortType stateType reflPf false
+    addDecl <| Declaration.thmDecl {
+      name := `ScratchFixture.PF5DeniedParent.parentFn.eq_1
+      levelParams := []
+      type := eqTy
+      value := val
+    }
+
+def pf5RealizerAnchor : Nat := 0
+
+end ScratchFixture.PF5Realizer

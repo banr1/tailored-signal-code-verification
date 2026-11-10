@@ -1,0 +1,8 @@
+import ScratchFixture.PRow87DeniedRealizer
+
+namespace ScratchFixture.PRow87CallerBadVal
+
+theorem prow87_bad_val : True = True :=
+  Classical.not_not._simp_8703
+
+end ScratchFixture.PRow87CallerBadVal

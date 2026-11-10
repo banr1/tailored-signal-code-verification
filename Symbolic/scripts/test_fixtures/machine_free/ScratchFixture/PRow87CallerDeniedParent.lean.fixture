@@ -1,0 +1,8 @@
+import ScratchFixture.PRow87CleanRealizer
+
+namespace ScratchFixture.PRow87CallerDeniedParent
+
+theorem prow87_denied_parent : True = True :=
+  ScratchFixture.PRow87DeniedRealizer.deniedParentThm._simp_8702
+
+end ScratchFixture.PRow87CallerDeniedParent

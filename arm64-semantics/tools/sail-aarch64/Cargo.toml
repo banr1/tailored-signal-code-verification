@@ -1,0 +1,8 @@
+[package]
+name = "sail-aarch64"
+version = "0.1.0"
+edition = "2024"
+description = "Safe Rust interface to the official Sail Armv9.4-A (rems-project/sail-arm) AArch64 ISA simulator"
+
+[dependencies]
+isa-oracle = { path = "../isa-oracle" }

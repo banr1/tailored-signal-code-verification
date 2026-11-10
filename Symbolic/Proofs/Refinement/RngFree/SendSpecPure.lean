@@ -1,0 +1,52 @@
+/-
+Copyright 2026 Google LLC
+
+All code is licensed under the Apache License, Version 2.0 (the "Apache 2.0"); you may not use this file except in compliance with the Apache 2.0 license. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+module
+
+public import Symbolic.Proofs.SpecLemmas.CliPureBytes
+public import LibsignalBinary.Specifications.LibsignalE2E.SchemeModel
+
+@[expose] public section
+
+set_option autoImplicit false
+
+namespace Symbolic.Proofs.SpecLemmas.CliPureBytes
+open CryptoVerification.E2E CryptoVerification.LibsignalTripleRatchetRepr
+open CryptoVerification.LibsignalTripleRatchet
+open CryptoGames CryptoGames.LibsignalSession CryptoGames.LibsignalSessionApi
+
+structure AddrVal where
+  name : List (BitVec 8)
+  device : BitVec 8
+  deriving DecidableEq
+
+end Symbolic.Proofs.SpecLemmas.CliPureBytes
+
+namespace CryptoVerification.LibsignalPublicApiRepr
+export Symbolic.Proofs.SpecLemmas.CliPureBytes (AddrVal)
+end CryptoVerification.LibsignalPublicApiRepr
+
+namespace CryptoVerification.E2E.Bin
+export Symbolic.Proofs.SpecLemmas.CliPureBytes (AddrVal )
+namespace Role
+end Role
+end CryptoVerification.E2E.Bin
+
+namespace Proofs.libsignal.Refinement.RngFree
+
+open CryptoVerification
+open CryptoVerification.E2E
+open CryptoVerification.E2E.Bin
+open CryptoVerification.LibsignalTripleRatchetRepr
+open CryptoVerification.LibsignalTripleRatchet
+open CryptoVerification.LibsignalSessionRepr
+open CryptoVerification.LibsignalProtoCodec
+open CryptoGames CryptoGames.LibsignalSession CryptoGames.LibsignalSessionApi
+
+end Proofs.libsignal.Refinement.RngFree

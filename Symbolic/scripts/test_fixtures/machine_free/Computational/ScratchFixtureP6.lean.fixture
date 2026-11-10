@@ -1,0 +1,9 @@
+import Arm64.Trusted.ISA.State
+
+namespace Computational.ScratchFixtureP6
+
+def coreOnlyDef : Nat := 99
+
+theorem arm64_lemma (s : Arm64.State) : s = s := rfl
+
+end Computational.ScratchFixtureP6

@@ -1,0 +1,29 @@
+# Translation configuration for unmodified Rust 1.98.1 `core` string/slice/formatting routines
+# (`core::str::converts::from_utf8` + 256-byte `UTF8_CHAR_WIDTH` `.rodata`,
+# `core::slice::memchr::memrchr`, and `core::fmt::write`) from the pinned
+# `aarch64-unknown-linux-musl` sysroot (`libcore-89491010f55f6617.rlib`,
+# SHA-256 3397f27434f891334ee2e29352a2fbab8de590e93b496379ee8bc1ab4b17cca9).
+
+obj_name = "core"
+namespace_prefix = "VerifiedLibraries.RustStd"
+obj_file = "RustStd/Generated/CoreObj.lean"
+title = "Rust 1.98.1 `core::str` / `core::slice::memchr` / `core::fmt` (`aarch64-unknown-linux-musl` prebuilt `libcore.rlib`)"
+hashed_inputs = [
+    "build.sh",
+]
+license_header = [
+    "Copyright (c) The Rust Project Contributors.",
+    "Licensed under the Apache License, Version 2.0 or the MIT license (Rust 1.98.1 aarch64-unknown-linux-musl sysroot).",
+]
+
+build_script = "build.sh"
+c_objects = ["build/rust_core.o"]
+
+[placed]
+placed_only = true
+multi = true
+exports = [
+    "core::str::converts::from_utf8",
+    "core::slice::memchr::memrchr",
+    "core::fmt::write",
+]

@@ -1,0 +1,7 @@
+import Arm64.Trusted.ISA.State
+
+namespace Symbolic.Specifications.ScratchFixtureP7
+
+def rogueSpecMachineDef (s : Arm64.State) : Prop := s = s
+
+end Symbolic.Specifications.ScratchFixtureP7
